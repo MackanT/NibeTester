@@ -22,13 +22,13 @@ def capture_messages():
         timeout=0.1,
     )
 
-    print("Capturing data for 5 seconds...")
+    print("Capturing data for 20 seconds...")
     print("Looking for 0xC0 start bytes and surrounding context\n")
 
     buffer = bytearray()
     start_time = time.time()
 
-    while (time.time() - start_time) < 5.0:
+    while (time.time() - start_time) < 20.0:
         data = ser.read(100)
         if data:
             buffer.extend(data)
@@ -44,8 +44,8 @@ def capture_messages():
     messages = []
     for i in range(len(buffer)):
         if buffer[i] == START_BYTE:
-            # Grab next 20 bytes after 0xC0 for analysis
-            end = min(i + 20, len(buffer))
+            # Grab next 100 bytes after 0xC0 for analysis (enough for full message)
+            end = min(i + 100, len(buffer))
             msg_bytes = buffer[i:end]
 
             if len(msg_bytes) >= 3:
