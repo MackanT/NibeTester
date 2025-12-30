@@ -76,7 +76,7 @@ class NibeSerial:
                 port=self.port,
                 baudrate=self.baudrate,
                 bytesize=serial.EIGHTBITS,
-                parity=serial.PARITY_EVEN,  # Nibe uses EVEN parity!
+                parity=serial.PARITY_NONE,  # Fighter 360P uses NO parity at 57600 baud
                 stopbits=serial.STOPBITS_ONE,
                 timeout=self.timeout,
             )
