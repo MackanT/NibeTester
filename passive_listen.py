@@ -7,8 +7,8 @@ import serial
 import time
 
 SERIAL_PORT = "/dev/ttyUSB0"
-BAUDRATE = 57600
-PARITY = serial.PARITY_NONE
+BAUDRATE = 9600  # Try traditional Nibe rate
+PARITY = serial.PARITY_EVEN  # Traditional Nibe uses EVEN parity
 
 print("=" * 70)
 print("PASSIVE LISTENING MODE")
