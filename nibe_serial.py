@@ -162,14 +162,28 @@ class NibeSerial:
     def _process_buffer(self):
         """Process read buffer and extract complete messages"""
         while len(self.read_buffer) > 0:
-            # Look for start byte
-            if self.read_buffer[0] != START_BYTE:
-                # Invalid start, discard byte
-                logger.warning(f"Invalid start byte: 0x{self.read_buffer[0]:02X}")
-                self.read_buffer.pop(0)
-                continue
+            # Look for start byte anywhere in buffer
+            if START_BYTE not in self.read_buffer:
+                # No start byte found, buffer is all garbage - clear it
+                if len(self.read_buffer) > 100:  # Only warn if significant data
+                    logger.debug(
+                        f"No start byte in {len(self.read_buffer)} bytes, clearing buffer"
+                    )
+                self.read_buffer.clear()
+                break
 
-            # Try to parse message
+            # Find the start byte position
+            start_idx = self.read_buffer.index(START_BYTE)
+
+            # Discard any bytes before the start byte
+            if start_idx > 0:
+                discarded = bytes(self.read_buffer[:start_idx])
+                logger.debug(
+                    f"Discarded {start_idx} bytes before start: {discarded.hex(' ')}"
+                )
+                self.read_buffer = self.read_buffer[start_idx:]
+
+            # Try to parse message starting at position 0 (which is now START_BYTE)
             msg = parse_message(self.read_buffer)
 
             if msg:
