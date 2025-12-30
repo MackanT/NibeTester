@@ -26,7 +26,7 @@ def main():
     print(f"Serial Port: {SERIAL_PORT}")
     print("=" * 70)
 
-    # Create serial connection
+    # Create serial connection (Fighter 360P uses 57600 baud, 8N1)
     nibe = NibeSerial(port=SERIAL_PORT, baudrate=57600)
 
     # Track received values
