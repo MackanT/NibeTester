@@ -27,7 +27,7 @@ def main():
     print("=" * 70)
 
     # Create serial connection
-    nibe = NibeSerial(port=SERIAL_PORT, baudrate=9600)
+    nibe = NibeSerial(port=SERIAL_PORT, baudrate=57600)
 
     # Track received values
     register_values = {}
