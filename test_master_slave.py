@@ -7,7 +7,8 @@ import serial
 import time
 
 SERIAL_PORT = "/dev/ttyUSB0"
-BAUDRATE = 57600
+BAUDRATE = 9600  # Try standard Nibe rate
+PARITY = serial.PARITY_EVEN  # Traditional Nibe uses EVEN parity
 
 
 def create_read_request(register: int) -> bytes:
@@ -40,7 +41,7 @@ ser = serial.Serial(
     port=SERIAL_PORT,
     baudrate=BAUDRATE,
     bytesize=serial.EIGHTBITS,
-    parity=serial.PARITY_NONE,
+    parity=PARITY,
     stopbits=serial.STOPBITS_ONE,
     timeout=0.5,
 )
