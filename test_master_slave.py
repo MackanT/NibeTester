@@ -7,8 +7,8 @@ import serial
 import time
 
 SERIAL_PORT = "/dev/ttyUSB0"
-BAUDRATE = 9600  # Try standard Nibe rate
-PARITY = serial.PARITY_EVEN  # Traditional Nibe uses EVEN parity
+BAUDRATE = 57600  # Back to the rate where we saw 0xC0
+PARITY = serial.PARITY_NONE
 
 
 def create_read_request(register: int) -> bytes:
@@ -59,6 +59,12 @@ print(f"  Bytes: {list(request)}\n")
 
 ser.write(request)
 ser.flush()
+
+# Small delay, then clear echo if any
+time.sleep(0.1)
+echo = ser.read(100)
+if echo:
+    print(f"Cleared {len(echo)} bytes (possible RS485 echo)\n")
 
 print("Waiting for response (3 seconds)...\n")
 time.sleep(3.0)
