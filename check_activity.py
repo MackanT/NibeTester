@@ -43,6 +43,15 @@ try:
     print(f"Total bytes received: {byte_count}")
     print(f"Unique byte values: {len(unique_bytes)}")
 
+    if unique_bytes:
+        sorted_bytes = sorted(unique_bytes)
+        print(f"\nUnique bytes (hex): {' '.join([f'{b:02X}' for b in sorted_bytes])}")
+        print(f"Unique bytes (dec): {' '.join([f'{b:3d}' for b in sorted_bytes])}")
+        
+        # Check for bytes close to 0xC0 (192)
+        if any(b in range(0xB0, 0xD0) for b in sorted_bytes):
+            print("\n⚠ Found bytes near 0xC0 range - possible parity/bit error!")
+
     if byte_count == 0:
         print("\n❌ NO DATA RECEIVED AT ALL!")
         print("\nPossible causes:")
