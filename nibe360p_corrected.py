@@ -357,7 +357,9 @@ def main():
     """Example usage"""
     import sys
 
-    SERIAL_PORT = "COM3"  # Change to your port (Windows: COM3, Linux: /dev/ttyUSB0)
+    SERIAL_PORT = (
+        "/dev/ttyUSB0"  # Change to your port (Windows: COM3, Linux: /dev/ttyUSB0)
+    )
 
     print("=" * 70)
     print("  Nibe 360P Heat Pump Bus Monitor")
