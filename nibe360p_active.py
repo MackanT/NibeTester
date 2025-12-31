@@ -203,8 +203,8 @@ class Nibe360PHeatPump:
         """
         Capture and display raw bus traffic to understand the protocol
         """
-        logger.info(f"\n📡 Capturing bus traffic for {duration} seconds...")
-        logger.info("Looking for patterns in the data...\n")
+        logger.info(f"📡 Capturing bus traffic for {duration} seconds...")
+        logger.info("Looking for patterns in the data...")
 
         start_time = time.time()
         buffer = bytearray()
@@ -229,7 +229,7 @@ class Nibe360PHeatPump:
 
         # Analyze for patterns
         if len(buffer) > 0:
-            print(f"\n📊 Analysis:")
+            print("\n📊 Analysis:")
             print(f"  - Most common byte: 0x{max(set(buffer), key=buffer.count):02X}")
             print(f"  - Unique bytes: {len(set(buffer))}")
 
@@ -246,7 +246,7 @@ class Nibe360PHeatPump:
             print(f"  - Found 'C0' (data start): {count_c0} times")
 
             # Show first 100 bytes in hex
-            print(f"\n📝 First 100 bytes:")
+            print("\n📝 First 100 bytes:")
             for i in range(min(100, len(buffer))):
                 if i % 16 == 0:
                     print(f"\n{i:04d}: ", end="")
@@ -345,11 +345,11 @@ class Nibe360PHeatPump:
 
         Returns: Dictionary of parameter_index -> value
         """
-        logger.info(f"\n{'=' * 70}")
-        logger.info(f"📖 Passive Parameter Reading Mode")
-        logger.info(f"{'=' * 70}")
+        logger.info("{'=' * 70}")
+        logger.info("📖 Passive Parameter Reading Mode")
+        logger.info("{'=' * 70}")
         logger.info(f"Duration: {duration} seconds")
-        logger.info(f"Waiting for pump to send data...\n")
+        logger.info("Waiting for pump to send data...\n")
 
         start_time = time.time()
         cycle_count = 0
@@ -360,7 +360,7 @@ class Nibe360PHeatPump:
                 continue
 
             cycle_count += 1
-            logger.info(f"\n🔄 Cycle {cycle_count}")
+            logger.info(f"🔄 Cycle {cycle_count}")
 
             # Step 2: Send ACK (we're ready to receive data)
             logger.info("📤 Sending ACK (ready to receive)...")
@@ -414,7 +414,7 @@ class Nibe360PHeatPump:
             else:
                 logger.warning("⚠️ No data received")
 
-        logger.info(f"\n{'=' * 70}")
+        logger.info(f"{'=' * 70}")
         logger.info(
             f"📊 Summary: Captured {len(self.parameter_values)} unique parameters"
         )
