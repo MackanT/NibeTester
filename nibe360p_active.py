@@ -345,9 +345,9 @@ class Nibe360PHeatPump:
 
         Returns: Dictionary of parameter_index -> value
         """
-        logger.info("{'=' * 70}")
+        logger.info(f"{'=' * 70}")
         logger.info("📖 Passive Parameter Reading Mode")
-        logger.info("{'=' * 70}")
+        logger.info(f"{'=' * 70}")
         logger.info(f"Duration: {duration} seconds")
         logger.info("Waiting for pump to send data...\n")
 
