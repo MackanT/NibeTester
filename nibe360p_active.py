@@ -360,12 +360,14 @@ class Nibe360PHeatPump:
                         param = self.parameters[param_idx]
                         actual_value = raw_value / param.factor
                         self.parameter_values[param_idx] = actual_value
+
+                        # Show raw value for debugging
                         logger.info(
-                            f"   [{param_idx:02X}] {param.name}: {actual_value} {param.unit}"
+                            f"   [{param_idx:02X}] {param.name}: {actual_value:.1f} {param.unit} (raw: {raw_value} = 0x{raw_value & 0xFFFF:04X})"
                         )
                     else:
-                        logger.debug(
-                            f"   [{param_idx:02X}] Unknown parameter: {raw_value}"
+                        logger.info(
+                            f"   [{param_idx:02X}] Unknown parameter: {raw_value} (0x{raw_value & 0xFFFF:04X})"
                         )
 
                 # Step 4: Send ACK to confirm receipt
