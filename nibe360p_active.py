@@ -335,9 +335,9 @@ class Nibe360PHeatPump:
         logger.warning("⏱️ Timeout waiting for response")
         return None
 
-    def read_parameters_passive(self, duration: float = 30.0) -> Dict[int, float]:
+    def read_parameters_once(self) -> Dict[int, float]:
         """
-        Passively read parameters by responding to pump's addressing.
+        Read one complete set of parameters from the pump.
 
         Protocol flow:
         1. Wait for addressing: *00 *14 (bytes with 9th bit = 1)
@@ -345,26 +345,23 @@ class Nibe360PHeatPump:
         3. Receive data packet: C0 00 24 <len> [00 <param> <value>...] <csum>
         4. Send ACK (0x06) to confirm receipt
         5. Receive *03 (ETX) to end transmission
-        6. Repeat
+        6. Repeat until we have collected all parameters
 
         Returns: Dictionary of parameter_index -> value
         """
+        logger.info(f"\n{'=' * 70}")
+        logger.info("📖 Reading Parameters from Pump")
         logger.info(f"{'=' * 70}")
-        logger.info("📖 Passive Parameter Reading Mode")
-        logger.info(f"{'=' * 70}")
-        logger.info(f"Duration: {duration} seconds")
-        logger.info("Waiting for pump to send data...\n")
+        logger.info("Collecting all parameters... This may take a few cycles.\n")
 
-        start_time = time.time()
-        cycle_count = 0
+        cycles_with_new_data = 0
+        max_cycles_without_new = 3  # Stop after 3 cycles with no new parameters
 
-        while time.time() - start_time < duration:
+        while cycles_with_new_data < max_cycles_without_new:
             # Step 1: Wait for pump to address RCU
-            if not self._wait_for_addressing(timeout=10.0):
-                continue
-
-            cycle_count += 1
-            logger.info(f"🔄 Cycle {cycle_count}")
+            if not self._wait_for_addressing(timeout=15.0):
+                logger.warning("Timeout waiting for pump. Stopping.")
+                break
 
             # Step 2: Send ACK (we're ready to receive data)
             logger.info("📤 Sending ACK (ready to receive)...")
@@ -376,24 +373,31 @@ class Nibe360PHeatPump:
             response = self._read_response(timeout=2.0)
 
             if response:
-                logger.info(
-                    f"✅ Received data with {len(response['parameters'])} parameters"
-                )
+                # Check if we got any new parameters
+                new_params = 0
+                for param_idx in response["parameters"].keys():
+                    if param_idx not in self.parameter_values:
+                        new_params += 1
 
-                # Display parameters
+                if new_params > 0:
+                    cycles_with_new_data = 0  # Reset counter
+                    logger.info(
+                        f"✅ Received {len(response['parameters'])} parameters ({new_params} new)"
+                    )
+                else:
+                    cycles_with_new_data += 1
+                    logger.info(
+                        f"✅ Received {len(response['parameters'])} parameters (all seen before)"
+                    )
+
+                # Store parameters
                 for param_idx, raw_value in response["parameters"].items():
                     if param_idx in self.parameters:
                         param = self.parameters[param_idx]
                         actual_value = raw_value / param.factor
                         self.parameter_values[param_idx] = actual_value
-
-                        # Show raw value for debugging
-                        logger.info(
-                            f"   [{param_idx:02X}] {param.name}: {actual_value:.1f} {param.unit} (raw: {raw_value} = 0x{raw_value & 0xFFFF:04X})"
-                        )
-                    else:
-                        logger.info(
-                            f"   [{param_idx:02X}] Unknown parameter: {raw_value} (0x{raw_value & 0xFFFF:04X})"
+                        logger.debug(
+                            f"   [{param_idx:02X}] {param.name}: {actual_value:.1f} {param.unit}"
                         )
 
                 # Step 4: Send ACK to confirm receipt
@@ -403,24 +407,21 @@ class Nibe360PHeatPump:
                 time.sleep(0.05)
 
                 # Step 5: Wait for ETX
-                logger.debug("⏳ Waiting for ETX...")
-                etx_buffer = bytearray()
                 etx_start = time.time()
                 while time.time() - etx_start < 1.0:
                     if self.serial.in_waiting > 0:
                         byte = self.serial.read(1)
-                        etx_buffer.extend(byte)
-                        logger.debug(f"Received: {byte.hex().upper()}")
                         if byte[0] == Nibe360PProtocol.ETX or byte[0] == 0x03:
-                            logger.info("✅ Received ETX (end of transmission)")
+                            logger.debug("✅ Received ETX")
                             break
                     time.sleep(0.01)
             else:
                 logger.warning("⚠️ No data received")
+                cycles_with_new_data += 1
 
-        logger.info(f"{'=' * 70}")
+        logger.info(f"\n{'=' * 70}")
         logger.info(
-            f"📊 Summary: Captured {len(self.parameter_values)} unique parameters"
+            f"📊 Collection Complete: {len(self.parameter_values)} unique parameters"
         )
         logger.info(f"{'=' * 70}")
 
@@ -451,7 +452,7 @@ NIBE_360P_PARAMETERS = [
     Register(0x0C, "Förskjutning värmekurva", 1, 1.0, "", False, "M2.2", -10, 10),
     Register(0x0D, "Beräknad framledningstemp.", 2, 1.0, "°C", False, "M2.0"),
     Register(0x13, "Kompressor", 1, 1.0, "", False, ""),  # Bitmask!
-    # Register(0x13, "Cirkulationspump 1", 1, 1.0, "", False, ""), # Do something with bitmask!
+    # Register(0x13, "Cirkulationspump 1", 1, 1.0, "", False, "M9.1.4"), # Do something with bitmask!
     Register(
         0x14, "Tillsatsvärme", 1, 1.0, "", False, ""
     ),  # Do something with bitmask!
@@ -471,10 +472,10 @@ NIBE_360P_PARAMETERS = [
     Register(0x17, "Strömförbrukning L1", 1, 10.0, "A", False, "M8.3.3"),
     Register(0x18, "Strömförbrukning L2", 1, 10.0, "A", False, "M8.3.4"),
     Register(0x19, "Strömförbrukning L3", 1, 10.0, "A", False, "M8.3.5"),
-    Register(0x1A, "Fabriksinställning", 1, 1.0, "", True, "M9.1.7"),
+    Register(0x1A, "Fabriksinställning", 1, 1.0, "", True, "M9.1.6"),
     Register(0x1B, "Antal starter kompressor", 1, 1.0, "", False, "M5.4"),
     Register(0x1C, "Drifttid kompressor", 1, 1.0, "h", False, "M5.5"),
-    Register(0x1D, "Tidfaktor elpatron", 1, 1.0, "", False, "M9.1.6"),
+    Register(0x1D, "Tidfaktor elpatron", 1, 1.0, "", False, "M9.1.8"),
     Register(0x1E, "Maxtemperatur framledning", 1, 1.0, "°C", True, "M2.4", 10, 65),
     Register(0x1F, "Mintemperatur framledning", 1, 1.0, "°C", True, "M2.3", 10, 65),
     Register(0x22, "Kompensering yttre", 1, 1.0, "", True, "M2.5", -10, 10),
@@ -542,11 +543,11 @@ def main():
             print("  PARAMETER READING")
             print("=" * 70)
             print("\nReading parameters from heat pump...")
-            print("Duration: 30 seconds")
-            print("Press Ctrl+C to stop early...\n")
+            print("This will collect data from multiple cycles until complete.")
+            print("\nPress Ctrl+C to stop early...\n")
             time.sleep(2)
 
-            values = pump.read_parameters_passive(duration=10.0)
+            values = pump.read_parameters_once()
 
             if values:
                 print("\n" + "🎉" * 35)
