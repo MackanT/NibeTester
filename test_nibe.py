@@ -32,21 +32,21 @@ def main():
     # Data inverted due to backwards RS485 adapter
     nibe = NibeSerial(port=SERIAL_PORT, baudrate=19200, invert_data=True)
 
-    # Track received values
+    # Track received values (async callbacks will populate this)
     register_values = {}
 
     def on_register_update(address: int, value: int):
-        """Callback when register value is received"""
+        """Callback when register value is received (async)"""
         reg_info = get_register_info(address)
         if reg_info:
             actual_value = reg_info.decode_value(value)
             register_values[address] = actual_value
-            print(f"  {reg_info.title}: {actual_value:.1f} {reg_info.unit}")
+            print(f"  ✓ {reg_info.title}: {actual_value:.1f} {reg_info.unit}")
         else:
             register_values[address] = value
-            print(f"  Register {address}: {value} (unknown)")
+            print(f"  ✓ Register {address}: {value}")
 
-    # Register callbacks for temperature sensors
+    # Register callbacks for all temperature sensors
     temp_registers = get_all_temperature_registers()
     for addr in temp_registers:
         nibe.add_register_callback(addr, on_register_update)
@@ -58,51 +58,70 @@ def main():
         return 1
 
     print("✓ Connected to Nibe heat pump")
-    print("\nWaiting for initial communication...")
+    print("\nWaiting for pump announcements...")
+    time.sleep(3)  # Let pump send announcements
 
     try:
-        # Wait a bit for pump to send announcements
-        time.sleep(3)
-
-        print("\nRequesting temperature sensors...")
+        print(
+            "\nRequesting temperature sensors (async - waiting for pump responses)..."
+        )
         print("-" * 70)
 
-        # Request all temperature registers
+        # Queue all read requests - they'll be sent when pump sends READ_TOKEN
         for addr in temp_registers:
-            nibe.read_register(addr)
-            time.sleep(0.2)  # Small delay between requests
+            nibe.request_register(addr)
+            time.sleep(0.3)  # Small delay between queueing
 
-        # Monitor for responses
-        print("\nReceiving data... (waiting 30 seconds)")
+        print(f"\nQueued {len(temp_registers)} read requests")
+        print("Waiting for responses (pump sends data on its schedule)...")
+        print("This may take 10-30 seconds...\n")
+
+        # Wait for responses to arrive via callbacks
         start_time = time.time()
+        last_count = 0
 
         while time.time() - start_time < 30:
+            time.sleep(1)
+
+            if len(register_values) != last_count:
+                print(
+                    f"  [{int(time.time() - start_time)}s] Received {len(register_values)}/{len(temp_registers)} values"
+                )
+                last_count = len(register_values)
+
+            # Stop early if we got everything
+            if len(register_values) == len(temp_registers):
+                print(f"\n✓ All {len(temp_registers)} registers received!")
+                break
             msg = nibe.wait_for_message(timeout=1.0)
             if msg:
                 # Message handled by callbacks
                 pass
 
-            # Show progress
-            if int(time.time() - start_time) % 5 == 0:
-                print(
-                    f"  ({int(time.time() - start_time)}s) Received {len(register_values)} values..."
-                )
+            time.sleep(0.5)  # Small delay between reads
 
         # Summary
         print("\n" + "=" * 70)
         print("Summary - Received Values:")
         print("=" * 70)
 
-        for addr in sorted(register_values.keys()):
-            reg_info = get_register_info(addr)
-            value = register_values[addr]
+        if register_values:
+            for addr in sorted(register_values.keys()):
+                reg_info = get_register_info(addr)
+                value = register_values[addr]
 
-            if reg_info:
-                print(f"{reg_info.title:40s}: {value:6.1f} {reg_info.unit}")
-            else:
-                print(f"Register {addr:5d}: {value}")
+                if reg_info:
+                    print(f"{reg_info.title:40s}: {value:6.1f} {reg_info.unit}")
+                else:
+                    print(f"Register {addr:5d}: {value}")
 
-        print(f"\nTotal: {len(register_values)} registers read")
+            print(f"\nTotal: {len(register_values)} registers read")
+        else:
+            print("No registers read successfully")
+            print("\nTroubleshooting:")
+            print("- Check that pump is powered on")
+            print("- Verify RS485 wiring (see PROTOCOL_FINDINGS.md)")
+            print("- Run show_messages.py to see what pump is sending")
 
     except KeyboardInterrupt:
         print("\n\nStopped by user")

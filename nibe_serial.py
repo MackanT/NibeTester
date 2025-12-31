@@ -220,51 +220,58 @@ class NibeSerial:
 
     def _handle_message(self, msg: NibeMessage):
         """
-        Handle received message
+        Handle received message - fully asynchronous, event-driven
 
         Args:
             msg: Parsed Nibe message
         """
-        # Handle READ TOKEN - pump is asking if we want to read
+        # Log all messages
+        logger.debug(f"Received message: cmd=0x{msg.command:02X}, len={msg.length}")
+        
+        # Handle READ TOKEN - pump is ready for us to send a request
         if msg.command == MessageType.READ_REQUEST:
-            logger.debug("Received READ TOKEN from pump")
-            # Send queued read request if we have any
+            logger.info("Received READ_TOKEN - pump ready for request")
+            # Send queued request if we have one
             if not self.send_queue.empty():
-                # Token received, we can send our request now
                 logger.info("Sending queued read request in response to token")
+                # Request already in queue, write loop will send it
             else:
-                # No requests queued, send ACK
+                # No requests pending, just ACK
                 self.send_ack()
-
-        # Respond to announcements and data with ACK
-        elif (
-            msg.command == MessageType.ANNOUNCEMENT
-            or msg.command == MessageType.DATA_RESPONSE
-        ):
+            return
+        
+        # Handle ANNOUNCEMENT - pump identification
+        if msg.command == MessageType.ANNOUNCEMENT:
+            logger.info("Received ANNOUNCEMENT from pump")
             self.send_ack()
             self.last_announcement = time.time()
-
-        # Extract register data if present
-        if msg.command == MessageType.DATA_RESPONSE and len(msg.data) >= 4:
-            # Data response format: [ADDR_LOW, ADDR_HIGH, DATA...]
-            self._decode_data_message(msg.data)
-
-        # Put message in receive queue
-        self.receive_queue.put(msg)
-
-        # Call registered callbacks
-        for callback in self.message_callbacks:
-            try:
-                callback(msg)
-            except Exception as e:
-                logger.exception(f"Error in message callback: {e}")
-
-    def _decode_data_message(self, data: bytes):
-        """
-        Decode data response message containing register values
-
-        Args:
-            data: Message data payload
+            return
+        
+        # Handle RMU system messages
+        if msg.command == MessageType.RMU_SYSTEM:
+            logger.debug("Received RMU_SYSTEM message")
+            self.send_ack()
+            return
+        
+        # Handle DATA_RESPONSE - this contains register values we requested
+        if msg.command == MessageType.DATA_RESPONSE:
+            logger.info("Received DATA_RESPONSE with register data")
+            self.send_ack()
+            
+            # Parse register data from payload
+            if len(msg.data) >= 4:
+                self._decode_data_message(msg.data)
+            
+            # Call message callbacks
+            for callback in self.message_callbacks:
+                try:
+                    callback(msg)
+                except Exception as e:
+                    logger.exception(f"Error in message callback: {e}")
+        else:
+            # Unknown message type, just ACK
+            logger.debug(f"Unknown message type 0x{msg.command:02X}, sending ACK")
+            self.send_ack()
         """
         i = 0
         while i < len(data) - 3:
@@ -295,9 +302,10 @@ class NibeSerial:
         """Send NACK to pump"""
         self.send_queue.put(create_nack())
 
-    def read_register(self, address: int):
+    def request_register(self, address: int):
         """
-        Queue a register read request
+        Queue a register read request (async - will be sent when pump sends READ_TOKEN)
+        Response will arrive asynchronously via callbacks
 
         Args:
             address: Register address to read
