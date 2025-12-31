@@ -355,7 +355,7 @@ class Nibe360PHeatPump:
         logger.info("Collecting all parameters... This may take a few cycles.\n")
 
         cycles_with_new_data = 0
-        max_cycles_without_new = 5  # Stop after 5 cycles with no new parameters
+        max_cycles_without_new = 3  # Stop after 3 cycles with no new parameters
 
         while cycles_with_new_data < max_cycles_without_new:
             # Step 1: Wait for pump to address RCU
@@ -450,38 +450,37 @@ NIBE_360P_PARAMETERS = [
     Register(0x09, "Temperatur elpatrongivare", 2, 10.0, "°C", False, "M1.2"),
     Register(0x0B, "Kurvlutning", 1, 1.0, "", True, "M2.1", -1, 15, 1),
     Register(0x0C, "Förskjutning värmekurva", 1, 1.0, "", False, "M2.2", -10, 10),
-    Register(0x0D, "Beräknad framledningstemp.", 2, 1.0, "°C", False, "M2.0"),
+    Register(0x0D, "Beräknad framledningstemp.", 1, 1.0, "°C", False, "M2.0"),
     Register(0x13, "Kompressor", 1, 1.0, "", False, ""),  # Bitmask!
     # Register(0x13, "Cirkulationspump 1", 1, 1.0, "", False, "M9.1.4"), # Do something with bitmask!
     Register(
-        0x14, "Tillsatsvärme", 1, 1.0, "", False, ""
+        0x14, "Tillsatsvärme", 2, 1.0, "", False, ""
     ),  # Do something with bitmask!
-    # Register(0x14, "Driftläge säsong", 1, 1.0, "", True, ""), # Do something with bitmask!
-    # Register(0x14, "Elpanna", 1, 1.0, "", True, "M9.1.1"),
-    # Register(0x14, "Fläkthastighet", 1, 1.0, "", True, "", 0, 3), ##TODO menu
-    # Register(0x14, "Avfrostning", 1, 1.0, "", True, ""),
-    Register(0x15, "Driftläge auto", 1, 1.0, "", True, "M8.2.1"),
-    # Register(0x15, "Extra varmvatten", 1, 1.0, "", True, "", 0, 4), ## Finns 5-7, men bara på låtsas
-    Register(0x16, "Högtryckslarm", 1, 1.0, "", False, ""),
-    # Register(0x16, "Lågtryckslarm", 1, 1.0, "", False, ""),
-    # Register(0x16, "Temperaturbegränsarlarm", 1, 1.0, "", False, ""),
-    # Register(0x16, "Filterlarm", 1, 1.0, "", False, ""),
-    # Register(0x16, "Givarfel", 1, 1.0, "", False, ""),
-    # Register(0x16, "Frånluftstemperaturslarm", 1, 1.0, "", False, ""),
-    Register(0x17, "Strömförbrukning L1", 1, 10.0, "A", False, "M8.3.3"),
-    Register(0x18, "Strömförbrukning L2", 1, 10.0, "A", False, "M8.3.4"),
-    Register(0x19, "Strömförbrukning L3", 1, 10.0, "A", False, "M8.3.5"),
+    # Register(0x14, "Driftläge säsong", 2, 1.0, "", True, ""), # Do something with bitmask!
+    # Register(0x14, "Elpanna", 2, 1.0, "", True, "M9.1.1"),
+    # Register(0x14, "Fläkthastighet", 2, 1.0, "", True, "", 0, 3), ##TODO menu
+    # Register(0x14, "Avfrostning", 2, 1.0, "", True, ""),
+    Register(0x15, "Driftläge auto", 2, 1.0, "", True, "M8.2.1"),
+    Register(0x16, "Högtryckslarm", 2, 1.0, "", False, ""),
+    # Register(0x16, "Lågtryckslarm", 2, 1.0, "", False, ""),
+    # Register(0x16, "Temperaturbegränsarlarm", 2, 1.0, "", False, ""),
+    # Register(0x16, "Filterlarm", 2, 1.0, "", False, ""),
+    # Register(0x16, "Givarfel", 2, 1.0, "", False, ""),
+    # Register(0x16, "Frånluftstemperaturslarm", 2, 1.0, "", False, ""),
+    Register(0x17, "Strömförbrukning L1", 2, 10.0, "A", False, "M8.3.3"),
+    Register(0x18, "Strömförbrukning L2", 2, 10.0, "A", False, "M8.3.4"),
+    Register(0x19, "Strömförbrukning L3", 2, 10.0, "A", False, "M8.3.5"),
     Register(0x1A, "Fabriksinställning", 1, 1.0, "", True, "M9.1.6"),
-    Register(0x1B, "Antal starter kompressor", 1, 1.0, "", False, "M5.4"),
-    Register(0x1C, "Drifttid kompressor", 1, 1.0, "h", False, "M5.5"),
-    Register(0x1D, "Tidfaktor elpatron", 1, 1.0, "", False, "M9.1.8"),
+    Register(0x1B, "Antal starter kompressor", 2, 1.0, "", False, "M5.4"),
+    Register(0x1C, "Drifttid kompressor", 2, 1.0, "h", False, "M5.5"),
+    Register(0x1D, "Tidfaktor elpatron", 2, 1.0, "", False, "M9.1.8"),
     Register(0x1E, "Maxtemperatur framledning", 1, 1.0, "°C", True, "M2.4", 10, 65),
     Register(0x1F, "Mintemperatur framledning", 1, 1.0, "°C", True, "M2.3", 10, 65),
     Register(0x22, "Kompensering yttre", 1, 1.0, "", True, "M2.5", -10, 10),
     Register(0x24, "Intervall per. extra VV", 1, 1.0, "dygn", True, "M1.3", 0, 90),
-    Register(0x25, "Starta om FIGHTER360P", 1, 1.0, "", True, ""),
-    # Register(0x25, "Extern larmsignal 1 (RCU DI 1)", 1, 1.0, "", False, ""),
-    # Register(0x25, "Extern larmsignal 2 (RCU DI 2)", 1, 1.0, "", False, ""),
+    Register(0x25, "Starta om FIGHTER360P", 2, 1.0, "", True, ""),
+    # Register(0x25, "Extern larmsignal 1 (RCU DI 1)", 2, 1.0, "", False, ""),
+    # Register(0x25, "Extern larmsignal 2 (RCU DI 2)", 21, 1.0, "", False, ""),
     Register(0x26, "RCU förskjutning 1 (Reg1)", 1, 1.0, "", True, "M2.7", -10, 10),
     Register(0x28, "Larmnivå frånluftstemperatur", 1, 1.0, "°C", True, "M5.6", 0, 20),
     Register(0x29, "Klocka: år", 1, 1.0, "", False, ""),
