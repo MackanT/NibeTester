@@ -1,24 +1,15 @@
 """
-Nibe 360P Heat Pump RS-485 Communication - ACTIVE REQUEST MODE
+Nibe 360P Heat Pump RS-485 Communication
 
-CRITICAL: Based on Swedish forum elektronikforumet.com findings:
-- Baudrate: 19200 (NOT 9600!)
+Protocol:
+- Baudrate: 19200
 - Format: 9-bit mode using MARK/SPACE parity
 - Custom Nibe protocol (NOT standard Modbus)
 
-This version ACTIVELY REQUESTS data from the pump by sending read commands.
-
-Protocol for reading:
-1. Send request with parameter index
-2. Wait for response with value
-3. Parse and display result
-
-Note: The 360P protocol is primarily master-initiated. This attempts to request data
-by emulating what the RCU would do when requesting a parameter.
+This implementation passively reads parameters by responding to the pump's polling.
 """
 
 import serial
-import struct
 import time
 from typing import Optional, Dict, List
 from dataclasses import dataclass
@@ -63,14 +54,6 @@ class Nibe360PProtocol:
         return checksum
 
     @staticmethod
-    def build_read_request(param_index: int) -> bytes:
-        """
-        Build a read request packet
-        Format: ENQ to indicate we want to send data
-        """
-        return bytes([Nibe360PProtocol.ENQ])
-
-    @staticmethod
     def parse_data_packet(data: bytes) -> Optional[Dict]:
         """
         Parse data packet from pump
@@ -97,9 +80,7 @@ class Nibe360PProtocol:
             logger.debug(f"Incomplete packet: {len(data)} < {expected_size}")
             return None
 
-        # Verify checksum
         checksum_received = data[expected_size - 1]
-        # Checksum includes C0 command byte! XOR from C0 to last data byte
         checksum_calc = Nibe360PProtocol.calc_checksum(data[0 : expected_size - 1])
 
         if checksum_received != checksum_calc:
@@ -145,9 +126,9 @@ class Nibe360PProtocol:
 
 class Nibe360PHeatPump:
     """
-    Nibe 360P Heat Pump - Active Request Mode
+    Nibe 360P Heat Pump Interface
 
-    Sends read requests to the pump and waits for responses.
+    Passively reads parameters by responding to the pump's addressing.
     Uses 9-bit mode via MARK/SPACE parity switching.
     """
 
@@ -421,6 +402,10 @@ class Nibe360PHeatPump:
         """Get cached parameter value"""
         return self.parameter_values.get(param_index)
 
+    def get_all_values(self) -> Dict[int, float]:
+        """Get all cached parameter values"""
+        return self.parameter_values.copy()
+
 
 # Parameter definitions for Nibe 360P
 NIBE_360P_PARAMETERS = [
@@ -440,18 +425,16 @@ NIBE_360P_PARAMETERS = [
 
 
 def main():
-    """Test reading parameters"""
-    import sys
-
-    SERIAL_PORT = "/dev/ttyUSB0"  # Linux USB-RS485 adapter
+    """Main program"""
+    SERIAL_PORT = "/dev/ttyUSB0"
 
     print("\n" + "=" * 70)
-    print("  Nibe 360P Heat Pump - Protocol Analyzer")
+    print("  Nibe 360P Heat Pump Reader")
     print("=" * 70)
     print()
     print("Options:")
-    print("  1) Capture bus traffic (see raw data)")
-    print("  2) Read parameters PASSIVELY (correct protocol)")
+    print("  1) Capture bus traffic (diagnostic mode)")
+    print("  2) Read parameters (normal operation)")
     print()
 
     choice = input("Choose option [1/2] (default: 2): ").strip() or "2"
@@ -474,45 +457,24 @@ def main():
 
     try:
         if choice == "1":
-            # Capture mode - see what's on the bus
+            # Diagnostic mode
             print("\n" + "=" * 70)
-            print("  BUS TRAFFIC CAPTURE MODE")
+            print("  BUS TRAFFIC CAPTURE")
             print("=" * 70)
-            print()
-            print("This will show you ALL bytes on the RS-485 bus.")
-            print("Look for patterns, repeated sequences, or familiar bytes.")
-            print("\nPress Ctrl+C to stop early...\n")
+            print("\nCapturing raw RS-485 bus data...")
+            print("Press Ctrl+C to stop...\n")
             time.sleep(2)
 
-            buffer = pump.capture_bus_traffic(duration=15.0)
-
-            print("\n" + "=" * 70)
-            print("  Next Steps:")
-            print("=" * 70)
-            print("Look at the captured data above:")
-            print("  - Do you see any repeating patterns?")
-            print("  - Do you see 0x00 0x14 (RCU addressing)?")
-            print("  - Do you see 0xC0 packets (data frames)?")
-            print("  - What are the most common bytes?")
-            print()
-            print("This will help us understand the actual protocol!")
+            pump.capture_bus_traffic(duration=15.0)
 
         else:
-            # Passive read mode - CORRECT PROTOCOL
+            # Normal operation
             print("\n" + "=" * 70)
-            print("  PASSIVE PARAMETER READING")
+            print("  PARAMETER READING")
             print("=" * 70)
-            print()
-            print("Protocol Flow:")
-            print("  1. Wait for pump addressing (*00 *14)")
-            print("  2. Send ACK (0x06)")
-            print("  3. Receive data packet (C0 00 24 ...)")
-            print("  4. Send ACK (0x06)")
-            print("  5. Receive ETX (*03)")
-            print("  6. Repeat")
-            print()
-            print("Duration: 30 seconds (multiple cycles)")
-            print("\nPress Ctrl+C to stop early...\n")
+            print("\nReading parameters from heat pump...")
+            print("Duration: 30 seconds")
+            print("Press Ctrl+C to stop early...\n")
             time.sleep(2)
 
             values = pump.read_parameters_passive(duration=30.0)
@@ -529,10 +491,8 @@ def main():
                     )
                 print()
             else:
-                print("\n" + "❌" * 35)
-                print("  No parameters received!")
-                print("❌" * 35)
-                print("\nTry option 1 to see raw bus traffic.")
+                print("\n❌ No parameters received!")
+                print("Try option 1 to diagnose the issue.")
 
     except KeyboardInterrupt:
         print("\n\n⚠️ Interrupted by user")
