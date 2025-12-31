@@ -355,7 +355,7 @@ class Nibe360PHeatPump:
         logger.info("Collecting all parameters... This may take a few cycles.\n")
 
         cycles_with_new_data = 0
-        max_cycles_without_new = 3  # Stop after 3 cycles with no new parameters
+        max_cycles_without_new = 5  # Stop after 5 cycles with no new parameters
 
         while cycles_with_new_data < max_cycles_without_new:
             # Step 1: Wait for pump to address RCU
@@ -460,7 +460,6 @@ NIBE_360P_PARAMETERS = [
     # Register(0x14, "Elpanna", 1, 1.0, "", True, "M9.1.1"),
     # Register(0x14, "Fläkthastighet", 1, 1.0, "", True, "", 0, 3), ##TODO menu
     # Register(0x14, "Avfrostning", 1, 1.0, "", True, ""),
-    # Register(0x14, "Kompensering yttre (indikation om aktiv)", 1, 1.0, "", False, ""),
     Register(0x15, "Driftläge auto", 1, 1.0, "", True, "M8.2.1"),
     # Register(0x15, "Extra varmvatten", 1, 1.0, "", True, "", 0, 4), ## Finns 5-7, men bara på låtsas
     Register(0x16, "Högtryckslarm", 1, 1.0, "", False, ""),
@@ -503,11 +502,11 @@ def main():
     print("=" * 70)
     print()
     print("Options:")
-    print("  1) Capture bus traffic (diagnostic mode)")
-    print("  2) Read parameters (normal operation)")
+    print("  1) Read parameters (normal operation)")
+    print("  9) Capture bus traffic (diagnostic mode)")
     print()
 
-    choice = input("Choose option [1/2] (default: 2): ").strip() or "2"
+    choice = input("Choose option [1/9] (default: 1): ").strip() or "1"
 
     print()
     print(f"Serial Port: {SERIAL_PORT}")
@@ -526,7 +525,7 @@ def main():
         return
 
     try:
-        if choice == "1":
+        if choice == "9":
             # Diagnostic mode
             print("\n" + "=" * 70)
             print("  BUS TRAFFIC CAPTURE")
@@ -550,14 +549,14 @@ def main():
             values = pump.read_parameters_once()
 
             if values:
-                print("\n" + "🎉" * 35)
+                print("\n" + "=" * 35)
                 print(f"  SUCCESS! Captured {len(values)} parameters:")
-                print("🎉" * 35)
+                print("=" * 35)
                 print()
                 for idx in sorted(values.keys()):
                     param = pump.parameters[idx]
                     print(
-                        f"  [{idx:02X}] {param.name:.<35} {values[idx]:>8.1f} {param.unit}"
+                        f"  [{idx:02X}] {param.name:.<35} {values[idx]:>8.1f} {param.unit:<5} {param.menu_structure}"
                     )
                 print()
             else:
