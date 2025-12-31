@@ -225,8 +225,19 @@ class NibeSerial:
         Args:
             msg: Parsed Nibe message
         """
-        # Respond to announcements with ACK
-        if (
+        # Handle READ TOKEN - pump is asking if we want to read
+        if msg.command == MessageType.READ_REQUEST:
+            logger.debug("Received READ TOKEN from pump")
+            # Send queued read request if we have any
+            if not self.send_queue.empty():
+                # Token received, we can send our request now
+                logger.info("Sending queued read request in response to token")
+            else:
+                # No requests queued, send ACK
+                self.send_ack()
+
+        # Respond to announcements and data with ACK
+        elif (
             msg.command == MessageType.ANNOUNCEMENT
             or msg.command == MessageType.DATA_RESPONSE
         ):
