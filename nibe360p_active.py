@@ -99,7 +99,8 @@ class Nibe360PProtocol:
 
         # Verify checksum
         checksum_received = data[expected_size - 1]
-        checksum_calc = Nibe360PProtocol.calc_checksum(data[2 : expected_size - 1])
+        # Checksum includes C0 command byte! XOR from C0 to last data byte
+        checksum_calc = Nibe360PProtocol.calc_checksum(data[0 : expected_size - 1])
 
         if checksum_received != checksum_calc:
             logger.warning(
