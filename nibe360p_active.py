@@ -54,10 +54,14 @@ class Nibe360PProtocol:
         return checksum
 
     @staticmethod
-    def parse_data_packet(data: bytes) -> Optional[Dict]:
+    def parse_data_packet(
+        data: bytes, param_defs: Dict[int, Register] = None
+    ) -> Optional[Dict]:
         """
         Parse data packet from pump
         Format: C0 00 24 <len> [00 <idx> <val>...] <checksum>
+
+        param_defs: Dictionary of parameter definitions to determine size (1 or 2 bytes)
         """
         if len(data) < 6:
             logger.debug(f"Packet too short: {len(data)} bytes")
@@ -106,20 +110,36 @@ class Nibe360PProtocol:
 
             param_index = payload[i + 1]
 
-            # Parse value: first byte is HIGH, second byte is LOW
-            if i + 3 < len(payload):
-                value_high = payload[i + 2]  # First byte after index
-                value_low = payload[i + 3]  # Second byte after index
-                value = (value_high << 8) | value_low
+            # Determine parameter size (1 or 2 bytes)
+            param_size = 2  # Default to 2 bytes
+            if param_defs and param_index in param_defs:
+                param_size = param_defs[param_index].size
 
-                # Handle signed values
-                if value >= 32768:
-                    value = value - 65536
-
-                parameters[param_index] = value
-                i += 4  # 00 + index + 2 value bytes
+            # Parse value based on size
+            if param_size == 1:
+                # Single byte parameter
+                if i + 2 < len(payload):
+                    value = payload[i + 2]
+                    # Handle signed byte values
+                    if value >= 128:
+                        value = value - 256
+                    parameters[param_index] = value
+                    i += 3  # 00 + index + 1 value byte
+                else:
+                    break
             else:
-                break
+                # Two byte parameter (HIGH byte first, LOW byte second)
+                if i + 3 < len(payload):
+                    value_high = payload[i + 2]
+                    value_low = payload[i + 3]
+                    value = (value_high << 8) | value_low
+                    # Handle signed values
+                    if value >= 32768:
+                        value = value - 65536
+                    parameters[param_index] = value
+                    i += 4  # 00 + index + 2 value bytes
+                else:
+                    break
 
         return {"sender": sender, "parameters": parameters}
 
@@ -296,8 +316,10 @@ class Nibe360PHeatPump:
                                 f"📦 Complete packet received: {packet.hex(' ').upper()}"
                             )
 
-                            # Parse it
-                            parsed = Nibe360PProtocol.parse_data_packet(packet)
+                            # Parse it - pass parameter definitions for size info
+                            parsed = Nibe360PProtocol.parse_data_packet(
+                                packet, self.parameters
+                            )
                             if parsed:
                                 return parsed
                             else:
@@ -479,7 +501,7 @@ def main():
             print("Press Ctrl+C to stop early...\n")
             time.sleep(2)
 
-            values = pump.read_parameters_passive(duration=30.0)
+            values = pump.read_parameters_passive(duration=10.0)
 
             if values:
                 print("\n" + "🎉" * 35)
