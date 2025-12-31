@@ -327,56 +327,94 @@ class Nibe360PHeatPump:
         logger.warning("⏱️ Timeout waiting for response")
         return None
 
-    def read_parameter(self, param_index: int) -> Optional[float]:
+    def read_parameters_passive(self, duration: float = 30.0) -> Dict[int, float]:
         """
-        Read a parameter from the pump
+        Passively read parameters by responding to pump's addressing.
 
-        Returns: Parameter value or None if failed
+        Protocol flow:
+        1. Wait for addressing: *00 *14 (bytes with 9th bit = 1)
+        2. Send ACK (0x06) to accept data
+        3. Receive data packet: C0 00 24 <len> [00 <param> <value>...] <csum>
+        4. Send ACK (0x06) to confirm receipt
+        5. Receive *03 (ETX) to end transmission
+        6. Repeat
+
+        Returns: Dictionary of parameter_index -> value
         """
-        if param_index not in self.parameters:
-            logger.error(f"❌ Parameter {param_index:02X} not defined")
-            return None
-
-        param = self.parameters[param_index]
         logger.info(f"\n{'=' * 70}")
-        logger.info(f"📖 Reading Parameter {param_index:02X}: {param.name}")
+        logger.info(f"📖 Passive Parameter Reading Mode")
+        logger.info(f"{'=' * 70}")
+        logger.info(f"Duration: {duration} seconds")
+        logger.info(f"Waiting for pump to send data...\n")
+
+        start_time = time.time()
+        cycle_count = 0
+
+        while time.time() - start_time < duration:
+            # Step 1: Wait for pump to address RCU
+            if not self._wait_for_addressing(timeout=10.0):
+                continue
+
+            cycle_count += 1
+            logger.info(f"\n🔄 Cycle {cycle_count}")
+
+            # Step 2: Send ACK (we're ready to receive data)
+            logger.info("📤 Sending ACK (ready to receive)...")
+            self._send_with_space_parity(bytes([Nibe360PProtocol.ACK]))
+
+            time.sleep(0.05)  # Small delay for pump to prepare data
+
+            # Step 3: Receive data packet
+            response = self._read_response(timeout=2.0)
+
+            if response:
+                logger.info(
+                    f"✅ Received data with {len(response['parameters'])} parameters"
+                )
+
+                # Display parameters
+                for param_idx, raw_value in response["parameters"].items():
+                    if param_idx in self.parameters:
+                        param = self.parameters[param_idx]
+                        actual_value = raw_value / param.factor
+                        self.parameter_values[param_idx] = actual_value
+                        logger.info(
+                            f"   [{param_idx:02X}] {param.name}: {actual_value} {param.unit}"
+                        )
+                    else:
+                        logger.debug(
+                            f"   [{param_idx:02X}] Unknown parameter: {raw_value}"
+                        )
+
+                # Step 4: Send ACK to confirm receipt
+                logger.info("📤 Sending ACK (data received OK)...")
+                self._send_with_space_parity(bytes([Nibe360PProtocol.ACK]))
+
+                time.sleep(0.05)
+
+                # Step 5: Wait for ETX
+                logger.debug("⏳ Waiting for ETX...")
+                etx_buffer = bytearray()
+                etx_start = time.time()
+                while time.time() - etx_start < 1.0:
+                    if self.serial.in_waiting > 0:
+                        byte = self.serial.read(1)
+                        etx_buffer.extend(byte)
+                        logger.debug(f"Received: {byte.hex().upper()}")
+                        if byte[0] == Nibe360PProtocol.ETX or byte[0] == 0x03:
+                            logger.info("✅ Received ETX (end of transmission)")
+                            break
+                    time.sleep(0.01)
+            else:
+                logger.warning("⚠️ No data received")
+
+        logger.info(f"\n{'=' * 70}")
+        logger.info(
+            f"📊 Summary: Captured {len(self.parameter_values)} unique parameters"
+        )
         logger.info(f"{'=' * 70}")
 
-        # Step 1: Wait for pump to address us
-        if not self._wait_for_addressing():
-            logger.error("❌ Pump did not address RCU")
-            return None
-
-        # Step 2: Send ENQ to indicate we want to send data (request parameter)
-        logger.info("📤 Sending ENQ (we have data to send)...")
-        self._send_with_space_parity(bytes([Nibe360PProtocol.ENQ]))
-
-        time.sleep(0.1)  # Small delay
-
-        # Step 3: Wait for pump's response with data
-        response = self._read_response()
-
-        if not response:
-            logger.error("❌ No response received")
-            return None
-
-        # Step 4: Extract parameter value
-        if param_index in response["parameters"]:
-            raw_value = response["parameters"][param_index]
-            actual_value = raw_value / param.factor
-
-            logger.info(f"✅ Success!")
-            logger.info(f"   Raw value: {raw_value}")
-            logger.info(f"   Actual value: {actual_value} {param.unit}")
-
-            self.parameter_values[param_index] = actual_value
-            return actual_value
-        else:
-            logger.warning(
-                f"⚠️ Parameter {param_index:02X} not in response. "
-                f"Received: {list(response['parameters'].keys())}"
-            )
-            return None
+        return self.parameter_values.copy()
 
     def get_value(self, param_index: int) -> Optional[float]:
         """Get cached parameter value"""
@@ -411,11 +449,11 @@ def main():
     print("=" * 70)
     print()
     print("Options:")
-    print("  1) Capture bus traffic (see what's happening)")
-    print("  2) Try to read parameter 0x01")
+    print("  1) Capture bus traffic (see raw data)")
+    print("  2) Read parameters PASSIVELY (correct protocol)")
     print()
 
-    choice = input("Choose option [1/2] (default: 1): ").strip() or "1"
+    choice = input("Choose option [1/2] (default: 2): ").strip() or "2"
 
     print()
     print(f"Serial Port: {SERIAL_PORT}")
@@ -459,28 +497,54 @@ def main():
             print("This will help us understand the actual protocol!")
 
         else:
-            # Active read mode
+            # Passive read mode - CORRECT PROTOCOL
             print("\n" + "=" * 70)
-            print("  ACTIVE READ MODE")
-            print("=" * 70)
-            print("  Attempting to read Parameter 0x01 (Outdoor Temperature)")
+            print("  PASSIVE PARAMETER READING")
             print("=" * 70)
             print()
+            print("Protocol Flow:")
+            print("  1. Wait for pump addressing (*00 *14)")
+            print("  2. Send ACK (0x06)")
+            print("  3. Receive data packet (C0 00 24 ...)")
+            print("  4. Send ACK (0x06)")
+            print("  5. Receive ETX (*03)")
+            print("  6. Repeat")
+            print()
+            print("Duration: 30 seconds (multiple cycles)")
+            print("\nPress Ctrl+C to stop early...\n")
+            time.sleep(2)
 
-            value = pump.read_parameter(0x01)
+            values = pump.read_parameters_passive(duration=30.0)
 
-            if value is not None:
+            if values:
                 print("\n" + "🎉" * 35)
-                print(f"  SUCCESS! Outdoor Temperature = {value}°C")
+                print(f"  SUCCESS! Captured {len(values)} parameters:")
                 print("🎉" * 35)
+                print()
+                for idx in sorted(values.keys()):
+                    param = pump.parameters[idx]
+                    print(
+                        f"  [{idx:02X}] {param.name:.<35} {values[idx]:>8.1f} {param.unit}"
+                    )
+                print()
             else:
                 print("\n" + "❌" * 35)
-                print("  FAILED to read parameter")
+                print("  No parameters received!")
                 print("❌" * 35)
-                print("\nTry option 1 first to see what's on the bus!")
+                print("\nTry option 1 to see raw bus traffic.")
 
     except KeyboardInterrupt:
         print("\n\n⚠️ Interrupted by user")
+
+        # Show what we captured so far
+        values = pump.get_all_values()
+        if values:
+            print("\n📊 Partial Results:")
+            print("=" * 70)
+            for idx in sorted(values.keys()):
+                if idx in pump.parameters:
+                    param = pump.parameters[idx]
+                    print(f"  [{idx:02X}] {param.name}: {values[idx]} {param.unit}")
     finally:
         pump.disconnect()
         print("\n✅ Disconnected\n")
