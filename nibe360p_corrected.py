@@ -289,7 +289,7 @@ NIBE_360P_PARAMETERS = [
 
 def main():
     """Example usage"""
-    SERIAL_PORT = "COM3"  # Change to your port
+    SERIAL_PORT = "/dev/ttyUSB0"  # Change to your port
 
     print("Nibe 360P Heat Pump Monitor (Corrected Protocol)")
     print("=================================================")
