@@ -31,19 +31,25 @@ class NibeSerial:
     """
 
     def __init__(
-        self, port: str = "/dev/ttyUSB0", baudrate: int = 9600, timeout: float = 1.0
+        self,
+        port: str = "/dev/ttyUSB0",
+        baudrate: int = 19200,
+        timeout: float = 1.0,
+        invert_data: bool = True,
     ):
         """
         Initialize serial connection
 
         Args:
             port: Serial port path (Windows: 'COM3', Linux: '/dev/ttyUSB0')
-            baudrate: Communication speed (default: 9600 for Nibe)
+            baudrate: Communication speed (default: 19200 for Fighter 360P)
             timeout: Read timeout in seconds
+            invert_data: Invert received data (XOR 0xFF) for backwards RS485 adapter
         """
         self.port = port
         self.baudrate = baudrate
         self.timeout = timeout
+        self.invert_data = invert_data
 
         self.serial: Optional[serial.Serial] = None
         self.running = False
@@ -76,7 +82,7 @@ class NibeSerial:
                 port=self.port,
                 baudrate=self.baudrate,
                 bytesize=serial.EIGHTBITS,
-                parity=serial.PARITY_NONE,  # Fighter 360P uses NO parity at 57600 baud
+                parity=serial.PARITY_EVEN,  # Fighter 360P uses EVEN parity at 19200 baud
                 stopbits=serial.STOPBITS_ONE,
                 timeout=self.timeout,
             )
@@ -121,6 +127,11 @@ class NibeSerial:
                 # Read available bytes
                 if self.serial.in_waiting:
                     data = self.serial.read(self.serial.in_waiting)
+
+                    # Invert data if adapter has A/B backwards
+                    if self.invert_data:
+                        data = bytes([b ^ 0xFF for b in data])
+
                     self.read_buffer.extend(data)
 
                     # Try to parse messages from buffer

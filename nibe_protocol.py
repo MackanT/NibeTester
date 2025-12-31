@@ -38,7 +38,7 @@ class MessageType(IntEnum):
 
 
 # Message constants
-START_BYTE = 0xC0
+START_BYTE = 0x5C  # F-series frame start byte (0x5C not 0xC0)
 RMU_START_LENGTHS = [0x19, 0x1A, 0x1B, 0x1C]  # System 1-4 messages
 
 
@@ -99,7 +99,7 @@ def create_read_request(register: int) -> bytes:
     """
     data = bytearray(
         [
-            START_BYTE,  # 0xC0
+            START_BYTE,  # 0x5C F-series frame start
             0x69,  # Read command
             0x02,  # Length (2 bytes for address)
             register & 0xFF,  # Address low byte
@@ -124,7 +124,7 @@ def create_write_request(register: int, value: int, size: str = "s16") -> bytes:
     """
     data = bytearray(
         [
-            START_BYTE,  # 0xC0
+            START_BYTE,  # 0x5C F-series frame start
             0x6B,  # Write command
         ]
     )

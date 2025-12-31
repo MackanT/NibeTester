@@ -24,10 +24,13 @@ def main():
     print("Nibe Fighter 360P - Temperature Monitor")
     print("=" * 70)
     print(f"Serial Port: {SERIAL_PORT}")
+    print(f"Settings: 19200 baud, EVEN parity, DATA INVERTED")
     print("=" * 70)
 
-    # Create serial connection (Fighter 360P uses 57600 baud, 8N1)
-    nibe = NibeSerial(port=SERIAL_PORT, baudrate=57600)
+    # Create serial connection
+    # Fighter 360P uses 19200 baud, EVEN parity
+    # Data inverted due to backwards RS485 adapter
+    nibe = NibeSerial(port=SERIAL_PORT, baudrate=19200, invert_data=True)
 
     # Track received values
     register_values = {}
