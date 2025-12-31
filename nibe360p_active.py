@@ -106,10 +106,10 @@ class Nibe360PProtocol:
 
             param_index = payload[i + 1]
 
-            # Assume 2 bytes for temperature parameters
+            # Parse value: first byte is HIGH, second byte is LOW
             if i + 3 < len(payload):
-                value_low = payload[i + 2]
-                value_high = payload[i + 3]
+                value_high = payload[i + 2]  # First byte after index
+                value_low = payload[i + 3]  # Second byte after index
                 value = (value_high << 8) | value_low
 
                 # Handle signed values
