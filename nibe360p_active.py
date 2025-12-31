@@ -197,6 +197,62 @@ class Nibe360PHeatPump:
             self.serial.parity = serial.PARITY_MARK
             logger.debug(f"Sent: {data.hex(' ').upper()}")
 
+    def capture_bus_traffic(self, duration: float = 10.0):
+        """
+        Capture and display raw bus traffic to understand the protocol
+        """
+        logger.info(f"\n📡 Capturing bus traffic for {duration} seconds...")
+        logger.info("Looking for patterns in the data...\n")
+
+        start_time = time.time()
+        buffer = bytearray()
+        byte_count = 0
+
+        while time.time() - start_time < duration:
+            if self.serial.in_waiting > 0:
+                byte = self.serial.read(1)
+                buffer.extend(byte)
+                byte_count += 1
+
+                # Print bytes in rows of 16
+                if byte_count % 16 == 1:
+                    print(f"\n{time.time() - start_time:06.2f}s: ", end="")
+                print(f"{byte[0]:02X} ", end="", flush=True)
+
+            time.sleep(0.001)
+
+        print("\n\n" + "=" * 70)
+        print(f"  Captured {byte_count} bytes")
+        print("=" * 70)
+
+        # Analyze for patterns
+        if len(buffer) > 0:
+            print(f"\n📊 Analysis:")
+            print(f"  - Most common byte: 0x{max(set(buffer), key=buffer.count):02X}")
+            print(f"  - Unique bytes: {len(set(buffer))}")
+
+            # Look for 0x00 0x14 pattern
+            count_00_14 = sum(
+                1
+                for i in range(len(buffer) - 1)
+                if buffer[i] == 0x00 and buffer[i + 1] == 0x14
+            )
+            print(f"  - Found '00 14' pattern: {count_00_14} times")
+
+            # Look for C0 (data packet start)
+            count_c0 = buffer.count(0xC0)
+            print(f"  - Found 'C0' (data start): {count_c0} times")
+
+            # Show first 100 bytes in hex
+            print(f"\n📝 First 100 bytes:")
+            for i in range(min(100, len(buffer))):
+                if i % 16 == 0:
+                    print(f"\n{i:04d}: ", end="")
+                print(f"{buffer[i]:02X} ", end="")
+            print("\n")
+
+        return buffer
+
     def _wait_for_addressing(self, timeout: float = 5.0) -> bool:
         """
         Wait for the pump to address us (0x00 0x14)
@@ -225,6 +281,7 @@ class Nibe360PHeatPump:
             time.sleep(0.01)
 
         logger.warning("⏱️ Timeout waiting for addressing")
+        logger.info(f"\n📋 Captured bytes: {' '.join(f'{b:02X}' for b in buffer[:50])}")
         return False
 
     def _read_response(self, timeout: float = 3.0) -> Optional[Dict]:
@@ -345,17 +402,24 @@ NIBE_360P_PARAMETERS = [
 
 def main():
     """Test reading parameters"""
+    import sys
+
     SERIAL_PORT = "/dev/ttyUSB0"  # Linux USB-RS485 adapter
 
     print("\n" + "=" * 70)
-    print("  Nibe 360P Heat Pump - ACTIVE READ MODE")
+    print("  Nibe 360P Heat Pump - Protocol Analyzer")
     print("=" * 70)
     print()
-    print("Mode: ACTIVE PARAMETER READING")
-    print("Baudrate: 19200 baud, 9-bit mode (MARK/SPACE parity)")
-    print("Function: Send read requests and display responses")
+    print("Options:")
+    print("  1) Capture bus traffic (see what's happening)")
+    print("  2) Try to read parameter 0x01")
+    print()
+
+    choice = input("Choose option [1/2] (default: 1): ").strip() or "1"
+
     print()
     print(f"Serial Port: {SERIAL_PORT}")
+    print("Baudrate: 19200 baud, 9-bit mode (MARK parity)")
     print()
 
     # Create pump instance
@@ -370,26 +434,50 @@ def main():
         return
 
     try:
-        # Test reading parameter 0x01 (Outdoor Temperature - your register 2)
-        print("\n" + "=" * 70)
-        print("  TEST: Reading Parameter 0x01 (Outdoor Temperature)")
-        print("=" * 70)
-        print()
+        if choice == "1":
+            # Capture mode - see what's on the bus
+            print("\n" + "=" * 70)
+            print("  BUS TRAFFIC CAPTURE MODE")
+            print("=" * 70)
+            print()
+            print("This will show you ALL bytes on the RS-485 bus.")
+            print("Look for patterns, repeated sequences, or familiar bytes.")
+            print("\nPress Ctrl+C to stop early...\n")
+            time.sleep(2)
 
-        value = pump.read_parameter(0x01)
+            buffer = pump.capture_bus_traffic(duration=15.0)
 
-        if value is not None:
-            print("\n" + "🎉" * 35)
-            print(f"  SUCCESS! Outdoor Temperature = {value}°C")
-            print("🎉" * 35)
+            print("\n" + "=" * 70)
+            print("  Next Steps:")
+            print("=" * 70)
+            print("Look at the captured data above:")
+            print("  - Do you see any repeating patterns?")
+            print("  - Do you see 0x00 0x14 (RCU addressing)?")
+            print("  - Do you see 0xC0 packets (data frames)?")
+            print("  - What are the most common bytes?")
+            print()
+            print("This will help us understand the actual protocol!")
+
         else:
-            print("\n" + "❌" * 35)
-            print("  FAILED to read parameter")
-            print("❌" * 35)
-            print("\nPossible reasons:")
-            print("  - Pump is not sending data (is RCU enabled?)")
-            print("  - Wiring issue (check A/B connections)")
-            print("  - Wrong protocol (360P has variations)")
+            # Active read mode
+            print("\n" + "=" * 70)
+            print("  ACTIVE READ MODE")
+            print("=" * 70)
+            print("  Attempting to read Parameter 0x01 (Outdoor Temperature)")
+            print("=" * 70)
+            print()
+
+            value = pump.read_parameter(0x01)
+
+            if value is not None:
+                print("\n" + "🎉" * 35)
+                print(f"  SUCCESS! Outdoor Temperature = {value}°C")
+                print("🎉" * 35)
+            else:
+                print("\n" + "❌" * 35)
+                print("  FAILED to read parameter")
+                print("❌" * 35)
+                print("\nTry option 1 first to see what's on the bus!")
 
     except KeyboardInterrupt:
         print("\n\n⚠️ Interrupted by user")
