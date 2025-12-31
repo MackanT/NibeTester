@@ -474,21 +474,16 @@ class NibeHeatPump:
             time.sleep(interval)
 
 
-# Example registers for Nibe 360P (you'll need to populate with actual registers)
+# Example registers for Nibe 360P
+# IMPORTANT: 360P uses register numbering starting at 1, but addresses start at 0
+# Register N in manual = Address (N-1) in code
 NIBE_360P_REGISTERS = [
-    # Common registers - adjust addresses for your 360P model
-    Register(40004, "BT1 Outdoor Temperature", "s16", 10.0, "°C", False),
-    Register(40008, "EB100-EP14 BT2 Supply temp S1", "s16", 10.0, "°C", False),
-    Register(40012, "EB100-EP14 BT3 Return temp", "s16", 10.0, "°C", False),
-    Register(40013, "BT7 Hot Water Temperature", "s16", 10.0, "°C", False),
-    Register(40014, "BT6 Hot Water Load", "s16", 10.0, "°C", False),
-    Register(40033, "BT1 Average", "s16", 10.0, "°C", False),
-    Register(43005, "Degree Minutes", "s16", 10.0, "DM", False),
-    Register(43009, "Calculated Supply Temperature S1", "s16", 10.0, "°C", False),
-    Register(43081, "Total HW Operation Time", "s32", 10.0, "h", False),
-    Register(47011, "Priority", "s8", 1.0, "", True),
-    Register(47398, "Temporary Lux", "s8", 1.0, "", True),
-    # Add more registers specific to your 360P model
+    # Register 2: Outdoor temperature (Menu M4.0) - CONFIRMED WORKING
+    Register(1, "BT1 Outdoor Temperature", "s16", 10.0, "°C", False),
+    # Add more registers from your 360P manual using (register_number - 1) as address
+    Register(2, "BT2 Supply temp S1", "s16", 10.0, "°C", False),
+    Register(3, "BT3 Return temp", "s16", 10.0, "°C", False),
+    Register(4, "BT7 Hot Water Temperature", "s16", 10.0, "°C", False),
 ]
 
 

@@ -32,66 +32,69 @@ NIBE_360P_REGISTERS = [
     # Return temperature
     Register(40012, "BT3 Return Temperature", "s16", 10.0, "°C", False),
     # Hot water temperatures
-    Register(40013, "BT7 Hot Water Temperature", "s16", 10.0, "°C", False),
-    Register(40014, "BT6 Hot Water Charge Temperature", "s16", 10.0, "°C", False),
+    Register(4, "BT7 Hot Water Temperature", "s16", 10.0, "°C", False),
+    Register(5, "BT6 Hot Water Charge Temperature", "s16", 10.0, "°C", False),
     # Brine/source temperatures (if applicable)
-    Register(40015, "BT10 Brine In Temperature", "s16", 10.0, "°C", False),
-    Register(40016, "BT11 Brine Out Temperature", "s16", 10.0, "°C", False),
+    Register(6, "BT10 Brine In Temperature", "s16", 10.0, "°C", False),
+    Register(7, "BT11 Brine Out Temperature", "s16", 10.0, "°C", False),
     # Average outdoor temperature
-    Register(40033, "BT1 Average Outdoor Temperature", "s16", 10.0, "°C", False),
+    Register(8, "BT1 Average Outdoor Temperature", "s16", 10.0, "°C", False),
     # Room temperature (if RMU connected)
-    Register(40033, "BT50 Room Temperature", "s16", 10.0, "°C", False),
+    Register(9, "BT50 Room Temperature", "s16", 10.0, "°C", False),
     # === OPERATIONAL DATA ===
     # Degree minutes (climate control parameter)
-    Register(43005, "Degree Minutes", "s16", 10.0, "DM", False),
+    Register(20, "Degree Minutes", "s16", 10.0, "DM", False),
     # Calculated supply temperature
-    Register(43009, "Calculated Supply Temperature S1", "s16", 10.0, "°C", False),
+    Register(21, "Calculated Supply Temperature S1", "s16", 10.0, "°C", False),
     # Compressor frequency
-    Register(43136, "Compressor Frequency Actual", "s16", 1.0, "Hz", False),
-    # Operating times
-    Register(43081, "Total Hot Water Operating Time", "s32", 10.0, "h", False),
-    Register(43084, "Total Compressor Operating Time", "s32", 10.0, "h", False),
+    Register(22, "Compressor Frequency Actual", "s16", 1.0, "Hz", False),
+    # Operating times (TODO: Map from manual)
+    Register(30, "Total Hot Water Operating Time", "s32", 10.0, "h", False),
+    Register(32, "Total Compressor Operating Time", "s32", 10.0, "h", False),
     # Compressor starts
-    Register(43086, "Number of Compressor Starts", "s32", 1.0, "", False),
+    Register(34, "Number of Compressor Starts", "s32", 1.0, "", False),
     # === STATUS AND ALARMS ===
-    # Alarm status
-    Register(45001, "Alarm Number", "s16", 1.0, "", False),
+    # Alarm status (TODO: Map from manual)
+    Register(40, "Alarm Number", "s16", 1.0, "", False),
     # Software version
-    Register(43001, "Software Version", "s16", 1.0, "", False),
+    Register(41, "Software Version", "s16", 1.0, "", False),
     # === SETTINGS (READ/WRITE) ===
+    # WARNING: Verify addresses before writing!
     # Priority: 0=Off, 10=Hot water, 20=Heat, 30=Pool, 40=Transfer, 60=Cooling
-    Register(47011, "Priority", "s8", 1.0, "", True),
+    Register(50, "Priority", "s8", 1.0, "", True),
     # Hot water settings
-    Register(47041, "Hot Water Comfort Mode", "s8", 1.0, "", True),
-    Register(47043, "Hot Water Setpoint Normal", "s16", 10.0, "°C", True),
-    Register(47044, "Hot Water Setpoint Luxury", "s16", 10.0, "°C", True),
+    Register(51, "Hot Water Comfort Mode", "s8", 1.0, "", True),
+    Register(52, "Hot Water Setpoint Normal", "s16", 10.0, "°C", True),
+    Register(53, "Hot Water Setpoint Luxury", "s16", 10.0, "°C", True),
     # Heating curve settings
-    Register(47398, "Temporary Lux", "s8", 1.0, "", True),
-    Register(47007, "Heat Curve S1", "s16", 10.0, "", True),
-    Register(47009, "Heat Curve Offset S1", "s16", 10.0, "°C", True),
+    Register(54, "Temporary Lux", "s8", 1.0, "", True),
+    Register(55, "Heat Curve S1", "s16", 10.0, "", True),
+    Register(56, "Heat Curve Offset S1", "s16", 10.0, "°C", True),
     # Room temperature setpoint
-    Register(47398, "Room Setpoint S1", "s16", 10.0, "°C", True),
+    Register(57, "Room Setpoint S1", "s16", 10.0, "°C", True),
     # Fan speed (if applicable)
-    Register(47260, "Fan Mode", "s8", 1.0, "", True),
+    Register(58, "Fan Mode", "s8", 1.0, "", True),
     # === ADDITIONAL SENSORS (model dependent) ===
     # Add more registers based on your specific 360P configuration
 ]
 
 # Register groups for easy access
-TEMPERATURE_REGISTERS = [40004, 40008, 40012, 40013, 40014, 40015, 40016, 40033]
-OPERATIONAL_REGISTERS = [43005, 43009, 43136, 43081, 43084, 43086]
-SETTINGS_REGISTERS = [47011, 47041, 47043, 47044, 47398, 47007, 47009]
+TEMPERATURE_REGISTERS = [1, 2, 3, 4, 5, 6, 7, 8]
+OPERATIONAL_REGISTERS = [20, 21, 22, 30, 32, 34]
+SETTINGS_REGISTERS = [50, 51, 52, 53, 54, 55, 56]
 
-# Common register addresses (you may need to adjust these)
+# Common register addresses
+# IMPORTANT: These are ADDRESSES (register number - 1)
+# Register 2 in manual = Address 1
 IMPORTANT_REGISTERS = {
-    "outdoor_temp": 40004,
-    "supply_temp": 40008,
-    "return_temp": 40012,
-    "hot_water_temp": 40013,
-    "degree_minutes": 43005,
-    "compressor_freq": 43136,
-    "priority": 47011,
-    "alarm": 45001,
+    "outdoor_temp": 1,  # Register 2 in manual (CONFIRMED)
+    "supply_temp": 2,  # TODO: Verify from manual
+    "return_temp": 3,  # TODO: Verify from manual
+    "hot_water_temp": 4,  # TODO: Verify from manual
+    "degree_minutes": 20,  # TODO: Map from manual
+    "compressor_freq": 22,  # TODO: Map from manual
+    "priority": 50,  # TODO: Map from manual
+    "alarm": 40,  # TODO: Map from manual
 }
 
 

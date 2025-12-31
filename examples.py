@@ -34,7 +34,7 @@ def example_basic_reading():
     try:
         time.sleep(2)  # Wait for connection
 
-        # Read outdoor temperature
+        # Read outdoor temperature (register 2 in manual = address 1)
         outdoor_temp = pump.read_register(IMPORTANT_REGISTERS["outdoor_temp"])
         if outdoor_temp is not None:
             print(f"Outdoor Temperature: {outdoor_temp}°C")
@@ -159,7 +159,7 @@ def example_data_logging():
 
             # Poll registers continuously
             while True:
-                for address in [40004, 40008, 40012, 40013, 43005]:
+                for address in [1, 2, 3, 4, 20]:  # Adjust addresses based on manual
                     pump.read_register(address)
                     time.sleep(0.5)
 
@@ -233,12 +233,12 @@ def example_temperature_dashboard():
             print()
 
             # Read and display temperatures
-            outdoor = pump.read_register(40004)
-            supply = pump.read_register(40008)
-            return_temp = pump.read_register(40012)
-            hot_water = pump.read_register(40013)
-            degree_min = pump.read_register(43005)
-            comp_freq = pump.read_register(43136)
+            outdoor = pump.read_register(1)  # Register 2 in manual
+            supply = pump.read_register(2)  # Register 3 in manual
+            return_temp = pump.read_register(3)  # Register 4 in manual
+            hot_water = pump.read_register(4)  # Register 5 in manual
+            degree_min = pump.read_register(20)  # Adjust based on manual
+            comp_freq = pump.read_register(22)  # Adjust based on manual
 
             print(
                 f"  Outdoor Temperature:     {outdoor:6.1f} °C"

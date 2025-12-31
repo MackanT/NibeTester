@@ -138,11 +138,8 @@ def test_connection(port=None):
         print("  Waiting 2 seconds for connection to stabilize...")
         time.sleep(2)
 
-        print("  Attempting to read register 40004 (outdoor temp)...")
-        value = pump.read_register(40004, timeout=5.0)
-
-        if value is not None:
-            print(f"  ✓ Successfully read register: {value}°C")
+        print("  Attempting to read register 1 (outdoor temp, register 2 in manual)...")
+        value = pump.read_register(1, timeout=5.0)
             print("  🎉 Communication working!")
         else:
             print("  ⚠ No response from heat pump")
