@@ -1,17 +1,21 @@
 """
-Nibe 360P Heat Pump RS-485 Communication - CORRECTED VERSION
+Nibe 360P Heat Pump RS-485 Communication - BUS MONITOR MODE
 
 IMPORTANT: Based on Swedish forum elektronikforumet.com findings:
 - Baudrate: 19200 (NOT 9600!)
 - Format: 9-bit mode (8 data bits + parity as 9th bit)
 - Custom Nibe protocol (NOT standard Modbus)
-- Parameter index based addressing (NOT Modbus register addresses)
+
+This version acts as a BUS MONITOR - passively reading all data on the RS-485 bus
+WITHOUT emulating the RCU. This is the safest approach.
+
+The pump's master controller (0x24) continuously polls all devices and sends data.
+We simply listen and decode all traffic.
 
 Protocol:
-1. Master addresses RCU with: *00 *14 (bit 9 = 1 for addressing)
-2. RCU responds: 0x06 (ACK) if passive, 0x05 (ENQ) if has data
-3. Master sends data if RCU sent ACK
-4. Format: C0 00 24 <len> <param_index> <value_bytes>... <checksum>
+- Master (0x24) sends data packets: C0 00 24 <len> [00 <param> <value>]* <checksum>
+- Various devices (RCU=0x14, Display=0xF9, etc.) respond with ACK/ENQ
+- We just capture and decode everything
 """
 
 import serial
@@ -126,14 +130,20 @@ class Nibe360PProtocol:
 
 class Nibe360PHeatPump:
     """
-    Nibe 360P Heat Pump communication
+    Nibe 360P Heat Pump Bus Monitor
 
-    NOTE: This uses MARK/SPACE parity to simulate 9-bit mode
-    - Receive with Mark parity to detect addressing (bit 9 = 1)
-    - Send with Space parity for data (bit 9 = 0)
+    Passively monitors the RS-485 bus and decodes all data packets.
+    Does NOT emulate RCU - just reads everything on the bus.
+
+    This is safer and simpler than active participation.
     """
 
-    def __init__(self, port: str, parameters: Optional[List[Register]] = None):
+    def __init__(
+        self,
+        port: str,
+        parameters: Optional[List[Register]] = None,
+        monitor_mode: bool = True,
+    ):
         self.port = port
         self.serial: Optional[serial.Serial] = None
         self.running = False
@@ -141,6 +151,7 @@ class Nibe360PHeatPump:
         self.parameters: Dict[int, Register] = {}
         self.parameter_values: Dict[int, float] = {}
         self.callbacks: List[Callable] = []
+        self.monitor_mode = monitor_mode  # Pure monitoring, no interaction
 
         if parameters:
             for param in parameters:
@@ -155,18 +166,35 @@ class Nibe360PHeatPump:
         self.callbacks.append(callback)
 
     def connect(self) -> bool:
-        """Connect to the heat pump"""
+        """Connect to the heat pump bus"""
         try:
-            # Use MARK parity for receiving (detect bit 9 = 1 for addressing)
-            self.serial = serial.Serial(
-                port=self.port,
-                baudrate=19200,  # CRITICAL: 19200, not 9600!
-                bytesize=serial.EIGHTBITS,
-                parity=serial.PARITY_MARK,  # Mark parity = bit 9 = 1 for addressing
-                stopbits=serial.STOPBITS_ONE,
-                timeout=0.1,
-            )
-            logger.info(f"Connected to {self.port} at 19200 baud (Mark parity)")
+            if self.monitor_mode:
+                # Pure monitoring mode - use 8N1 to capture all data
+                # We'll see both addressing (with parity errors) and data
+                self.serial = serial.Serial(
+                    port=self.port,
+                    baudrate=19200,
+                    bytesize=serial.EIGHTBITS,
+                    parity=serial.PARITY_NONE,  # No parity - see all bytes
+                    stopbits=serial.STOPBITS_ONE,
+                    timeout=0.1,
+                )
+                logger.info(
+                    f"Connected to {self.port} at 19200 baud (Monitor mode - 8N1)"
+                )
+            else:
+                # Interactive mode - use MARK parity to detect addressing
+                self.serial = serial.Serial(
+                    port=self.port,
+                    baudrate=19200,
+                    bytesize=serial.EIGHTBITS,
+                    parity=serial.PARITY_MARK,
+                    stopbits=serial.STOPBITS_ONE,
+                    timeout=0.1,
+                )
+                logger.info(
+                    f"Connected to {self.port} at 19200 baud (Interactive mode - Mark parity)"
+                )
 
             # Start read thread
             self.running = True
@@ -190,7 +218,6 @@ class Nibe360PHeatPump:
     def _read_loop(self):
         """Background thread for reading serial data"""
         buffer = bytearray()
-        addressed = False
 
         while self.running:
             try:
@@ -198,23 +225,24 @@ class Nibe360PHeatPump:
                     data = self.serial.read(self.serial.in_waiting)
                     buffer.extend(data)
 
-                    # Look for addressing sequence: 0x00 0x14
-                    for i in range(len(buffer) - 1):
-                        if (
-                            buffer[i] == 0x00
-                            and buffer[i + 1] == Nibe360PProtocol.RCU_ADDR
-                        ):
-                            logger.debug("RCU addressed!")
-                            addressed = True
-                            buffer = buffer[i + 2 :]  # Remove addressing bytes
+                    if self.monitor_mode:
+                        # Monitor mode - just look for data packets
+                        self._scan_for_packets(buffer)
+                    else:
+                        # Interactive mode - look for addressing
+                        for i in range(len(buffer) - 1):
+                            if (
+                                buffer[i] == 0x00
+                                and buffer[i + 1] == Nibe360PProtocol.RCU_ADDR
+                            ):
+                                logger.debug("RCU addressed!")
+                                buffer = buffer[i + 2 :]
+                                self._send_ack()
+                                break
 
-                            # Send ACK (switch to Space parity for sending)
-                            self._send_ack()
-                            break
-
-                    # Process data packets
-                    if len(buffer) > 0 and buffer[0] == Nibe360PProtocol.CMD_DATA:
-                        self._process_data_packet(buffer)
+                        # Process data packets
+                        if len(buffer) > 0 and buffer[0] == Nibe360PProtocol.CMD_DATA:
+                            self._process_data_packet(buffer)
 
                 time.sleep(0.01)
 
@@ -222,9 +250,47 @@ class Nibe360PHeatPump:
                 logger.error(f"Error in read loop: {e}")
                 time.sleep(0.1)
 
+    def _scan_for_packets(self, buffer: bytearray):
+        """Scan buffer for C0 data packets (monitor mode)"""
+        while True:
+            # Look for start of packet (C0)
+            try:
+                idx = buffer.index(Nibe360PProtocol.CMD_DATA)
+            except ValueError:
+                # No C0 found, keep first byte in case it's part of next packet
+                if len(buffer) > 100:
+                    buffer[:] = buffer[-50:]  # Keep last 50 bytes
+                break
+
+            # Remove everything before C0
+            if idx > 0:
+                buffer[:] = buffer[idx:]
+
+            # Check if we have enough data for header
+            if len(buffer) < 5:
+                break
+
+            # Get packet length
+            length = buffer[3]
+            packet_size = length + 5  # C0 + 00 + sender + len + data + checksum
+
+            # Wait for complete packet
+            if len(buffer) < packet_size:
+                break
+
+            # Extract packet
+            packet = bytes(buffer[:packet_size])
+            buffer[:] = buffer[packet_size:]  # Remove processed packet
+
+            # Process it
+            self._process_data_packet(bytearray(packet))
+
+            # Log raw packet for debugging
+            logger.debug(f"Raw packet: {packet.hex(' ').upper()}")
+
     def _send_ack(self):
-        """Send ACK with Space parity (bit 9 = 0)"""
-        if self.serial:
+        """Send ACK with Space parity (bit 9 = 0) - only in interactive mode"""
+        if self.serial and not self.monitor_mode:
             # Temporarily switch to Space parity for sending
             self.serial.parity = serial.PARITY_SPACE
             self.serial.write(bytes([Nibe360PProtocol.ACK]))
@@ -289,49 +355,93 @@ NIBE_360P_PARAMETERS = [
 
 def main():
     """Example usage"""
-    SERIAL_PORT = "/dev/ttyUSB0"  # Change to your port
+    import sys
 
-    print("Nibe 360P Heat Pump Monitor (Corrected Protocol)")
-    print("=================================================")
-    print("Baudrate: 19200 (9-bit mode with MARK/SPACE parity)")
+    SERIAL_PORT = "COM3"  # Change to your port (Windows: COM3, Linux: /dev/ttyUSB0)
+
+    print("=" * 70)
+    print("  Nibe 360P Heat Pump Bus Monitor")
+    print("=" * 70)
+    print()
+    print("Mode: PASSIVE BUS MONITORING (No RCU emulation)")
+    print("Baudrate: 19200 baud, 8N1")
+    print("Function: Read and decode all data on RS-485 bus")
+    print()
     print(f"Connecting to {SERIAL_PORT}...")
     print()
 
-    pump = Nibe360PHeatPump(SERIAL_PORT, parameters=NIBE_360P_PARAMETERS)
+    # Use monitor mode - safest option, just reads everything
+    pump = Nibe360PHeatPump(
+        SERIAL_PORT, parameters=NIBE_360P_PARAMETERS, monitor_mode=True
+    )
 
     def on_data_update(param_index: int, name: str, value: float, unit: str):
         timestamp = time.strftime("%H:%M:%S")
-        print(f"[{timestamp}] {name}: {value} {unit}")
+        print(f"[{timestamp}] Param {param_index:02X}: {name} = {value} {unit}")
 
     pump.add_callback(on_data_update)
 
     if not pump.connect():
-        print("Failed to connect!")
+        print("❌ Failed to connect!")
+        print("\nTroubleshooting:")
+        print("  1. Check serial port name (COM3, COM4, etc.)")
+        print("  2. Ensure RS-485 adapter is connected")
+        print("  3. Verify wiring: A→A, B→B, GND→GND")
         return
 
     try:
-        print("Listening for data from heat pump...")
-        print("The pump will send data automatically when it addresses the RCU.")
-        print("Press Ctrl+C to exit\n")
+        print("✅ Connected successfully!")
+        print("\n" + "=" * 70)
+        print("  Monitoring RS-485 bus for data packets...")
+        print("  The pump's master controller sends data every few seconds.")
+        print("  Press Ctrl+C to exit")
+        print("=" * 70)
+        print()
+
+        last_summary_time = 0
 
         while True:
-            time.sleep(1)
+            time.sleep(0.5)
 
-            # Show current values every 10 seconds
-            if int(time.time()) % 10 == 0:
+            # Show summary every 15 seconds
+            current_time = int(time.time())
+            if current_time - last_summary_time >= 15 and current_time % 15 == 0:
                 values = pump.get_all_values()
                 if values:
-                    print(f"\n--- Current Values ({len(values)} parameters) ---")
+                    print(f"\n{'─' * 70}")
+                    print(f"  Current Values ({len(values)} parameters received)")
+                    print(f"{'─' * 70}")
                     for idx, val in sorted(values.items()):
                         if idx in pump.parameters:
                             param = pump.parameters[idx]
-                            print(f"  {param.name}: {val} {param.unit}")
-                time.sleep(1)  # Prevent multiple prints in same second
+                            print(f"  {param.name:.<40} {val:>8.1f} {param.unit}")
+                    print(f"{'─' * 70}\n")
+                    last_summary_time = current_time
+                elif current_time > 30:
+                    print("\n⚠️  No data received yet. Check:")
+                    print("  - Is the heat pump powered on?")
+                    print("  - Is RS-485 wiring correct?")
+                    print("  - Is RCU enabled in pump menu?")
+                    last_summary_time = current_time
 
     except KeyboardInterrupt:
-        print("\nShutting down...")
+        print("\n\n" + "=" * 70)
+        print("  Shutting down...")
+        print("=" * 70)
     finally:
         pump.disconnect()
+
+        # Show final summary
+        values = pump.get_all_values()
+        if values:
+            print(f"\n📊 Session Summary: Captured {len(values)} parameters")
+            print("=" * 70)
+            for idx, val in sorted(values.items()):
+                if idx in pump.parameters:
+                    param = pump.parameters[idx]
+                    print(f"  [{idx:02X}] {param.name}: {val} {param.unit}")
+            print("=" * 70)
+        print("\n✅ Disconnected.\n")
 
 
 if __name__ == "__main__":
