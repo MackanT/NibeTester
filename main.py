@@ -377,14 +377,11 @@ class NibeHeatPump:
         logger.info(f"\n📋 Captured bytes: {' '.join(f'{b:02X}' for b in buffer[:50])}")
         return False
 
-    def _read_response(
-        self, timeout: float = 3.0, filter_param: Optional[int] = None
-    ) -> Optional[Dict]:
+    def _read_response(self, timeout: float = 3.0) -> Optional[Dict]:
         """Read and parse response packet from pump
 
         Args:
             timeout: Maximum time to wait for response
-            filter_param: If specified, only parse packets containing this parameter index
         """
         logger.debug("📥 Reading response from pump...")
         start_time = time.time()
@@ -411,30 +408,6 @@ class NibeHeatPump:
                         # Wait for complete packet
                         if len(buffer) >= packet_size:
                             packet = bytes(buffer[:packet_size])
-
-                            # If filtering for a specific parameter, do quick scan first
-                            if filter_param is not None:
-                                # Quick scan: look for 00 <param_index> pattern in payload
-                                payload = packet[4 : 4 + length - 1]
-                                found = False
-                                for i in range(
-                                    0, len(payload) - 1, 3
-                                ):  # Approximate stride
-                                    if i < len(payload) and payload[i] == 0x00:
-                                        if (
-                                            i + 1 < len(payload)
-                                            and payload[i + 1] == filter_param
-                                        ):
-                                            found = True
-                                            break
-
-                                if not found:
-                                    logger.debug(
-                                        f"⏩ Packet doesn't contain parameter 0x{filter_param:02X}, skipping"
-                                    )
-                                    buffer = buffer[packet_size:]  # Skip this packet
-                                    continue
-
                             logger.info(
                                 f"📦 Complete packet received: {packet.hex(' ').upper()}"
                             )
@@ -621,42 +594,82 @@ class NibeHeatPump:
             self._send_with_space_parity(bytes([self.pump.ack]))
             time.sleep(0.05)
 
-            # Receive data packet - filter for our specific parameter
-            response = self._read_response(timeout=2.0, filter_param=param_index)
+            # Receive data packet
+            response = self._read_response(timeout=2.0)
 
-            if response and param_index in response["parameters"]:
-                raw_value = response["parameters"][param_index]
+            if response:
+                # Check if this packet contains our parameter
+                if param_index in response["parameters"]:
+                    raw_value = response["parameters"][param_index]
 
-                if param_index in self.parameters:
-                    param = self.parameters[param_index]
+                    if param_index in self.parameters:
+                        param = self.parameters[param_index]
 
-                    # Check if this is a bitmask register
-                    if param.bit_fields:
-                        # Store all bit fields
-                        for bit_field in param.bit_fields:
-                            masked_value = raw_value & bit_field.mask
-                            shift = (bit_field.mask & -bit_field.mask).bit_length() - 1
-                            actual_value = masked_value >> shift
-                            key = f"0x{param_index:02X}:{bit_field.name}"
-                            self.bit_field_values[key] = actual_value
+                        # Check if this is a bitmask register
+                        if param.bit_fields:
+                            # Store all bit fields
+                            for bit_field in param.bit_fields:
+                                masked_value = raw_value & bit_field.mask
+                                shift = (
+                                    bit_field.mask & -bit_field.mask
+                                ).bit_length() - 1
+                                actual_value = masked_value >> shift
+                                key = f"0x{param_index:02X}:{bit_field.name}"
+                                self.bit_field_values[key] = actual_value
 
-                        logger.info(
-                            f"✅ Found parameter 0x{param_index:02X} with {len(param.bit_fields)} bit fields"
-                        )
-                        return None  # Bit fields stored separately
+                            logger.info(
+                                f"✅ Found parameter 0x{param_index:02X} with {len(param.bit_fields)} bit fields"
+                            )
+
+                            # Send ACK to confirm receipt
+                            self._send_with_space_parity(bytes([self.pump.ack]))
+                            time.sleep(0.05)
+
+                            # Wait for ETX to complete protocol cycle
+                            etx_start = time.time()
+                            while time.time() - etx_start < 1.0:
+                                if self.serial.in_waiting > 0:
+                                    byte = self.serial.read(1)
+                                    if byte[0] == self.pump.etx:
+                                        logger.debug("✅ Received ETX")
+                                        break
+                                time.sleep(0.01)
+
+                            return None  # Bit fields stored separately
+                        else:
+                            # Regular parameter
+                            actual_value = raw_value / param.factor
+                            self.parameter_values[param_index] = actual_value
+                            logger.info(
+                                f"✅ Found parameter 0x{param_index:02X}: {actual_value} {param.unit}"
+                            )
+
+                            # Send ACK to confirm receipt
+                            self._send_with_space_parity(bytes([self.pump.ack]))
+                            time.sleep(0.05)
+
+                            # Wait for ETX to complete protocol cycle
+                            etx_start = time.time()
+                            while time.time() - etx_start < 1.0:
+                                if self.serial.in_waiting > 0:
+                                    byte = self.serial.read(1)
+                                    if byte[0] == self.pump.etx:
+                                        logger.debug("✅ Received ETX")
+                                        break
+                                time.sleep(0.01)
+
+                            return actual_value
                     else:
-                        # Regular parameter
-                        actual_value = raw_value / param.factor
-                        self.parameter_values[param_index] = actual_value
+                        # Unknown parameter, just store raw value
                         logger.info(
-                            f"✅ Found parameter 0x{param_index:02X}: {actual_value} {param.unit}"
+                            f"✅ Found parameter 0x{param_index:02X}: {raw_value} (raw)"
                         )
 
                         # Send ACK to confirm receipt
                         self._send_with_space_parity(bytes([self.pump.ack]))
                         time.sleep(0.05)
 
-                        # Wait for ETX to complete protocol cycle
+                        # Wait for ETX
                         etx_start = time.time()
                         while time.time() - etx_start < 1.0:
                             if self.serial.in_waiting > 0:
@@ -666,18 +679,16 @@ class NibeHeatPump:
                                     break
                             time.sleep(0.01)
 
-                        return actual_value
+                        return float(raw_value)
                 else:
-                    # Unknown parameter, just store raw value
-                    logger.info(
-                        f"✅ Found parameter 0x{param_index:02X}: {raw_value} (raw)"
+                    # Parameter not in this packet - complete protocol cycle and try again
+                    logger.debug(
+                        f"⏩ Packet doesn't contain parameter 0x{param_index:02X}, completing cycle..."
                     )
-
-                    # Send ACK to confirm receipt
                     self._send_with_space_parity(bytes([self.pump.ack]))
                     time.sleep(0.05)
 
-                    # Wait for ETX
+                    # Wait for ETX before next cycle
                     etx_start = time.time()
                     while time.time() - etx_start < 1.0:
                         if self.serial.in_waiting > 0:
@@ -686,24 +697,6 @@ class NibeHeatPump:
                                 logger.debug("✅ Received ETX")
                                 break
                         time.sleep(0.01)
-
-                    return float(raw_value)
-
-            # Send ACK anyway to keep communication going
-            if response:
-                self._send_with_space_parity(bytes([self.pump.ack]))
-                time.sleep(0.05)
-
-                # Wait for ETX before next cycle
-                etx_start = time.time()
-                while time.time() - etx_start < 1.0:
-                    if self.serial.in_waiting > 0:
-                        byte = self.serial.read(1)
-                        if byte[0] == self.pump.etx:
-                            logger.debug("✅ Received ETX")
-                            break
-                    time.sleep(0.01)
-
         logger.warning(
             f"⏱️ Timeout: Parameter 0x{param_index:02X} not received within {timeout}s"
         )
