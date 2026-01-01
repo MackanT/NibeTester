@@ -779,183 +779,162 @@ class NibeHeatPump:
 
         print(f"Raw value to write: {raw_value} (0x{raw_value:04X})\n")
 
-        start_time = time.time()
-        attempt = 0
+        # Wait for pump to address us
+        if not self._wait_for_addressing(timeout=5.0):
+            logger.error("❌ Pump did not address RCU")
+            return False
 
-        while time.time() - start_time < timeout:
-            attempt += 1
-            if attempt > 1:
-                logger.info(f"🔄 Retry attempt {attempt}...")
+        # Clear buffer BEFORE sending ENQ (to remove any old data)
+        self.serial.reset_input_buffer()
 
-            # Wait for pump to address us (reduce logging on retries)
-            if not self._wait_for_addressing(timeout=5.0, verbose=(attempt == 1)):
-                logger.debug("⏭️  No addressing, waiting before retry...")
-                time.sleep(1.0)
-                continue
+        # Send ENQ (0x05) to signal write intent
+        logger.info("📤 Sending ENQ (write request)...")
+        self._send_with_space_parity(bytes([self.pump.enq]))
+        time.sleep(0.05)  # Small delay for pump to process
 
-            # Clear buffer BEFORE sending ENQ (to remove any old data)
-            self.serial.reset_input_buffer()
-
-            # Send ENQ (0x05) to signal write intent
-            logger.info("📤 Sending ENQ (write request)...")
-            self._send_with_space_parity(bytes([self.pump.enq]))
-            time.sleep(0.05)  # Small delay for pump to process
-
-            # Wait for ACK from pump
-            logger.debug("⏳ Waiting for pump ACK...")
-            ack_start = time.time()
-            pump_acked = False
-            while time.time() - ack_start < 2.0:
-                if self.serial.in_waiting > 0:
-                    byte = self.serial.read(1)
-                    logger.debug(
-                        f"   Received byte: 0x{byte[0]:02X} (expected ACK=0x{self.pump.ack:02X})"
-                    )
-                    if byte[0] == self.pump.ack:
-                        logger.info("✅ Pump acknowledged write request")
-                        pump_acked = True
-                        break
-                    else:
-                        logger.warning(f"   Unexpected byte: 0x{byte[0]:02X}")
-                time.sleep(0.01)
-
-            if not pump_acked:
-                logger.warning("❌ Timeout waiting for pump ACK, retrying...")
-                continue
-
-            # Build data packet
-            # Format: C0 00 14 <len> 00 <param_index> <value_bytes> <checksum>
-            # Parameter MUST be defined - no defaults
-            if not param:
-                logger.error(
-                    f"❌ Parameter 0x{param_index:02X} not defined in YAML! Cannot write."
+        # Wait for ACK from pump
+        logger.debug("⏳ Waiting for pump ACK...")
+        ack_start = time.time()
+        pump_acked = False
+        while time.time() - ack_start < 2.0:
+            if self.serial.in_waiting > 0:
+                byte = self.serial.read(1)
+                logger.debug(
+                    f"   Received byte: 0x{byte[0]:02X} (expected ACK=0x{self.pump.ack:02X})"
                 )
-                return False
-
-            if param.data_type is None:
-                logger.error(
-                    f"❌ Parameter 0x{param_index:02X} is missing data_type in YAML!"
-                )
-                return False
-
-            data_type = param.data_type
-
-            # Use the parameter's size field to determine byte count on the wire
-            # size=1 means send 1 byte, size=2 means send 2 bytes (matches READ format)
-            if param.size == 1:
-                # Single byte parameter
-                value_bytes = [raw_value & 0xFF]
-            else:
-                # Two byte parameter (HIGH byte first, LOW byte second)
-                value_high = (raw_value >> 8) & 0xFF
-                value_low = raw_value & 0xFF
-                value_bytes = [value_high, value_low]
-
-            # Data payload: 00 <param_index> <value_bytes> (same format as reads)
-            data_payload = [
-                param_index
-            ] + value_bytes  ## TODO prepend 00 separator for 2byte values
-            # Length field = payload size + 1 for checksum byte
-            data_length = len(data_payload) + 1
-
-            # Build full packet: C0 00 14 <len> <payload>
-            packet = [
-                self.pump.cmd_data,  # C0
-                0x00,
-                self.pump.rcu_addr,  # 14 (our address as sender)
-                data_length,
-            ] + data_payload
-
-            # Calculate checksum on ALL bytes built so far
-            checksum = NibeProtocol.calc_checksum(packet)
-            packet.append(checksum)
-
-            # Verify packet structure before sending
-            logger.debug(f"Packet breakdown:")
-            logger.debug(f"  CMD: 0x{packet[0]:02X}")
-            logger.debug(f"  Fixed: 0x{packet[1]:02X}")
-            logger.debug(f"  Sender: 0x{packet[2]:02X}")
-            logger.debug(f"  Length: 0x{packet[3]:02X} ({packet[3]} bytes)")
-            logger.debug(f"  Payload: {' '.join(f'{b:02X}' for b in packet[4:-1])}")
-            logger.debug(f"  Checksum: 0x{packet[-1]:02X}")
-            logger.debug(f"  Total packet size: {len(packet)} bytes")
-
-            # Send data packet with SPACE parity (9th bit = 0)
-            packet_bytes = bytes(packet)
-            logger.info(f"📤 Sending write packet: {packet_bytes.hex(' ').upper()}")
-            logger.info(
-                f"   Param: 0x{param_index:02X}, Raw value: {raw_value} (0x{raw_value:04X}), Bytes: {' '.join(f'{b:02X}' for b in value_bytes)}"
-            )
-            logger.info(
-                f"   Checksum: 0x{checksum:02X}, Data length field: 0x{data_length:02X}"
-            )
-            # Send packet using same method as ENQ (switches back to MARK after sending)
-            self._send_with_space_parity(packet_bytes)
-
-            # Give pump time to process and respond
-            time.sleep(0.15)
-
-            # Wait for ACK or NAK (we're back in MARK parity now, consistent with ENQ handling)
-            logger.info("⏳ Waiting for pump response (ACK/NAK)...")
-            response_start = time.time()
-            response_bytes = []  # Track all bytes received
-            while time.time() - response_start < 3.0:  # Increased timeout
-                if self.serial.in_waiting > 0:
-                    byte = self.serial.read(1)
-                    response_bytes.append(byte[0])
-                    logger.info(
-                        f"   Received byte: 0x{byte[0]:02X} (ACK=0x{self.pump.ack:02X}, NAK=0x{self.pump.nak:02X})"
-                    )
-                    if byte[0] == self.pump.ack:
-                        logger.info("✅ Pump acknowledged write (ACK)")
-
-                        # Send *ETX (with 9th bit set = MARK parity) to complete transaction
-                        logger.info("📤 Sending *ETX (complete)...")
-                        # ETX must be sent with MARK parity (9th bit = 1)
-                        self.serial.parity = serial.PARITY_MARK
-                        self.serial.write(bytes([self.pump.etx]))
-                        self.serial.flush()
-                        # Switch back to MARK for receiving
-                        self.serial.parity = serial.PARITY_MARK
-                        logger.debug(
-                            f"Sent *ETX: {self.pump.etx:02X} (with 9th bit set)"
-                        )
-
-                        # Wait for pump to complete write and restart addressing cycle
-                        time.sleep(2.0)
-                        # Clear any residual data from buffers
-                        self.serial.reset_input_buffer()
-                        self.serial.reset_output_buffer()
-
-                        print(f"\n{'=' * FULL_LINE}")
-                        print("  ✅ WRITE SUCCESSFUL!")
-                        print(f"{'=' * FULL_LINE}\n")
-                        return True
-                    elif byte[0] == self.pump.nak:
-                        logger.warning(
-                            "❌ Pump rejected write (NAK - checksum error), retrying..."
-                        )
-                        break  # Try again (already in MARK parity)
-                    else:
-                        logger.warning(
-                            f"   Unexpected byte during ACK/NAK wait: 0x{byte[0]:02X}"
-                        )
-                        break  # Try again (already in MARK parity)
-                time.sleep(0.01)
-            else:
-                # Already in MARK parity for next addressing attempt
-                if response_bytes:
-                    logger.warning(
-                        f"❌ Timeout waiting for pump response. Received bytes: {' '.join(f'{b:02X}' for b in response_bytes)}"
-                    )
+                if byte[0] == self.pump.ack:
+                    logger.info("✅ Pump acknowledged write request")
+                    pump_acked = True
+                    break
                 else:
-                    logger.warning(
-                        "❌ Timeout waiting for pump response (no bytes received)"
-                    )
-                continue
+                    logger.warning(f"   Unexpected byte: 0x{byte[0]:02X}")
+            time.sleep(0.01)
 
-        # Already in MARK parity
-        logger.error(f"❌ Write failed after {timeout}s timeout")
+        if not pump_acked:
+            logger.error("❌ Pump did not acknowledge write request")
+            return False
+
+        # Build data packet
+        # Format: C0 00 14 <len> 00 <param_index> <value_bytes> <checksum>
+        # Parameter MUST be defined - no defaults
+        if not param:
+            logger.error(
+                f"❌ Parameter 0x{param_index:02X} not defined in YAML! Cannot write."
+            )
+            return False
+
+        if param.data_type is None:
+            logger.error(
+                f"❌ Parameter 0x{param_index:02X} is missing data_type in YAML!"
+            )
+            return False
+
+        data_type = param.data_type  ## TODO use this?
+
+        # Use the parameter's size field to determine byte count on the wire
+        # size=1 means send 1 byte, size=2 means send 2 bytes (matches READ format)
+        if param.size == 1:
+            # Single byte parameter
+            value_bytes = [raw_value & 0xFF]
+        else:
+            # Two byte parameter (HIGH byte first, LOW byte second)
+            value_high = (raw_value >> 8) & 0xFF
+            value_low = raw_value & 0xFF
+            value_bytes = [value_high, value_low]
+
+        # Data payload: 00 <param_index> <value_bytes> (same format as reads)
+        data_payload = [0x00, param_index] + value_bytes
+        # Length field = payload size
+        data_length = len(data_payload)
+
+        # Build full packet: C0 00 14 <len> <payload>
+        packet = [
+            self.pump.cmd_data,  # C0
+            0x00,
+            self.pump.rcu_addr,  # 14 (our address as sender)
+            data_length,
+        ] + data_payload
+
+        # Calculate checksum on ALL bytes built so far
+        checksum = NibeProtocol.calc_checksum(packet)
+        packet.append(checksum)
+
+        # Verify packet structure before sending
+        logger.info(f"Packet breakdown:")
+        logger.info(f"  CMD: 0x{packet[0]:02X}")
+        logger.info(f"  Fixed: 0x{packet[1]:02X}")
+        logger.info(f"  Sender: 0x{packet[2]:02X}")
+        logger.info(f"  Length: 0x{packet[3]:02X} ({packet[3]} bytes)")
+        logger.info(f"  Payload: {' '.join(f'{b:02X}' for b in packet[4:-1])}")
+        logger.info(f"  Checksum: 0x{packet[-1]:02X}")
+        logger.info(f"  Total packet size: {len(packet)} bytes")
+
+        # Send data packet with SPACE parity (9th bit = 0)
+        packet_bytes = bytes(packet)
+        logger.info(f"📤 Sending write packet: {packet_bytes.hex(' ').upper()}")
+        logger.info(
+            f"   Param: 0x{param_index:02X}, Raw value: {raw_value} (0x{raw_value:04X}), Bytes: {' '.join(f'{b:02X}' for b in value_bytes)}"
+        )
+        logger.info(
+            f"   Checksum: 0x{checksum:02X}, Data length field: 0x{data_length:02X}"
+        )
+        # Send packet using same method as ENQ (switches back to MARK after sending)
+        self._send_with_space_parity(packet_bytes)
+
+        # Give pump time to process and respond
+        time.sleep(0.15)
+
+        # Wait for ACK or NAK (we're back in MARK parity now, consistent with ENQ handling)
+        logger.info("⏳ Waiting for pump response (ACK/NAK)...")
+        response_start = time.time()
+        response_bytes = []  # Track all bytes received
+        while time.time() - response_start < 3.0:  # Increased timeout
+            if self.serial.in_waiting > 0:
+                byte = self.serial.read(1)
+                response_bytes.append(byte[0])
+                logger.info(
+                    f"   Received byte: 0x{byte[0]:02X} (ACK=0x{self.pump.ack:02X}, NAK=0x{self.pump.nak:02X})"
+                )
+                if byte[0] == self.pump.ack:
+                    logger.info("✅ Pump acknowledged write (ACK)")
+
+                    # Send *ETX (with 9th bit set = MARK parity) to complete transaction
+                    logger.info("📤 Sending *ETX (complete)...")
+                    # ETX must be sent with MARK parity (9th bit = 1)
+                    self.serial.parity = serial.PARITY_MARK
+                    self.serial.write(bytes([self.pump.etx]))
+                    self.serial.flush()
+                    # Switch back to MARK for receiving
+                    self.serial.parity = serial.PARITY_MARK
+                    logger.debug(f"Sent *ETX: {self.pump.etx:02X} (with 9th bit set)")
+
+                    # Wait for pump to complete write and restart addressing cycle
+                    time.sleep(2.0)
+                    # Clear any residual data from buffers
+                    self.serial.reset_input_buffer()
+                    self.serial.reset_output_buffer()
+
+                    print(f"\n{'=' * FULL_LINE}")
+                    print("  ✅ WRITE SUCCESSFUL!")
+                    print(f"{'=' * FULL_LINE}\n")
+                    return True
+                elif byte[0] == self.pump.nak:
+                    logger.error("❌ Pump rejected write (NAK - checksum error)")
+                    return False
+                else:
+                    logger.error(
+                        f"❌ Unexpected byte during ACK/NAK wait: 0x{byte[0]:02X}"
+                    )
+                    return False
+            time.sleep(0.01)
+
+        # Timeout waiting for response
+        if response_bytes:
+            logger.error(
+                f"❌ Timeout waiting for pump response. Received bytes: {' '.join(f'{b:02X}' for b in response_bytes)}"
+            )
+        else:
+            logger.error("❌ Timeout waiting for pump response (no bytes received)")
         return False
 
     def get_value(self, param_index: int) -> Optional[float]:
