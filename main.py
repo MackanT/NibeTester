@@ -22,7 +22,7 @@ TIMEOUT = 60
 
 # Setup logging
 logging.basicConfig(
-    level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s"
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -359,12 +359,17 @@ class NibeHeatPump:
 
         return buffer
 
-    def _wait_for_addressing(self, timeout: float = 5.0) -> bool:
+    def _wait_for_addressing(self, timeout: float = 5.0, verbose: bool = True) -> bool:
         """
         Wait for the pump to address us (0x00 0x14)
         Returns True if addressed, False if timeout
+
+        Args:
+            timeout: Maximum time to wait
+            verbose: If False, reduce debug logging (useful during write retries)
         """
-        logger.debug("⏳ Waiting for pump to address RCU (0x00 0x14)...")
+        if verbose:
+            logger.debug("⏳ Waiting for pump to address RCU (0x00 0x14)...")
         start_time = time.time()
         buffer = bytearray()
 
@@ -372,7 +377,8 @@ class NibeHeatPump:
             if self.serial.in_waiting > 0:
                 byte = self.serial.read(1)
                 buffer.extend(byte)
-                logger.debug(f"Received byte: {byte.hex().upper()}")
+                if verbose:
+                    logger.debug(f"Received byte: {byte.hex().upper()}")
 
                 # Look for addressing sequence
                 if len(buffer) >= 2:
@@ -387,7 +393,10 @@ class NibeHeatPump:
             time.sleep(0.01)
 
         logger.warning("⏱️ Timeout waiting for addressing")
-        logger.info(f"\n📋 Captured bytes: {' '.join(f'{b:02X}' for b in buffer[:50])}")
+        if verbose:
+            logger.info(
+                f"\n📋 Captured bytes: {' '.join(f'{b:02X}' for b in buffer[:50])}"
+            )
         return False
 
     def _read_response(self, timeout: float = 3.0) -> Optional[Dict]:
@@ -774,8 +783,8 @@ class NibeHeatPump:
             if attempt > 1:
                 logger.info(f"🔄 Retry attempt {attempt}...")
 
-            # Wait for pump to address us
-            if not self._wait_for_addressing(timeout=5.0):
+            # Wait for pump to address us (reduce logging on retries)
+            if not self._wait_for_addressing(timeout=5.0, verbose=(attempt == 1)):
                 logger.debug("⏭️  No addressing, waiting before retry...")
                 time.sleep(1.0)
                 continue
