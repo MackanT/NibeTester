@@ -1521,11 +1521,21 @@ def main():
 
                     # Wait for response
                     logger.info("⏳ Waiting for pump response...")
+                    logger.info(f"   Current parity: {pump.serial.parity}")
+                    logger.info(
+                        f"   Bytes in buffer before wait: {pump.serial.in_waiting}"
+                    )
                     response_start = time.time()
+                    response_bytes = []
                     while time.time() - response_start < 3.0:
-                        if pump.serial.in_waiting > 0:
+                        in_waiting = pump.serial.in_waiting
+                        if in_waiting > 0:
+                            logger.info(f"   📥 {in_waiting} byte(s) in buffer")
                             byte = pump.serial.read(1)
-                            logger.info(f"   Received byte: 0x{byte[0]:02X}")
+                            response_bytes.append(byte[0])
+                            logger.info(
+                                f"   Received byte: 0x{byte[0]:02X} (ACK=0x{pump.pump.ack:02X}, NAK=0x{pump.pump.nak:02X})"
+                            )
                             if byte[0] == pump.pump.ack:
                                 logger.info("✅ Pump sent ACK!")
                                 # Send ETX
@@ -1538,9 +1548,19 @@ def main():
                             elif byte[0] == pump.pump.nak:
                                 logger.error("❌ Pump sent NAK")
                                 break
+                            else:
+                                logger.warning(f"   Unexpected byte: 0x{byte[0]:02X}")
                         time.sleep(0.01)
+                        # Log every second
+                        elapsed = time.time() - response_start
+                        if int(elapsed * 10) % 10 == 0 and elapsed > 0.5:
+                            logger.debug(
+                                f"   Still waiting... {int(elapsed)}s, buffer: {pump.serial.in_waiting}"
+                            )
                     else:
-                        logger.error("❌ Timeout waiting for response")
+                        logger.error(
+                            f"❌ Timeout waiting for response (received {len(response_bytes)} bytes: {' '.join(f'{b:02X}' for b in response_bytes) if response_bytes else 'none'})"
+                        )
 
     except KeyboardInterrupt:
         print("\n\n⚠️ Interrupted by user")
