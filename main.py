@@ -377,8 +377,15 @@ class NibeHeatPump:
         logger.info(f"\n📋 Captured bytes: {' '.join(f'{b:02X}' for b in buffer[:50])}")
         return False
 
-    def _read_response(self, timeout: float = 3.0) -> Optional[Dict]:
-        """Read and parse response packet from pump"""
+    def _read_response(
+        self, timeout: float = 3.0, filter_param: Optional[int] = None
+    ) -> Optional[Dict]:
+        """Read and parse response packet from pump
+
+        Args:
+            timeout: Maximum time to wait for response
+            filter_param: If specified, only parse packets containing this parameter index
+        """
         logger.debug("📥 Reading response from pump...")
         start_time = time.time()
         buffer = bytearray()
@@ -404,6 +411,30 @@ class NibeHeatPump:
                         # Wait for complete packet
                         if len(buffer) >= packet_size:
                             packet = bytes(buffer[:packet_size])
+
+                            # If filtering for a specific parameter, do quick scan first
+                            if filter_param is not None:
+                                # Quick scan: look for 00 <param_index> pattern in payload
+                                payload = packet[4 : 4 + length - 1]
+                                found = False
+                                for i in range(
+                                    0, len(payload) - 1, 3
+                                ):  # Approximate stride
+                                    if i < len(payload) and payload[i] == 0x00:
+                                        if (
+                                            i + 1 < len(payload)
+                                            and payload[i + 1] == filter_param
+                                        ):
+                                            found = True
+                                            break
+
+                                if not found:
+                                    logger.debug(
+                                        f"⏩ Packet doesn't contain parameter 0x{filter_param:02X}, skipping"
+                                    )
+                                    buffer = buffer[packet_size:]  # Skip this packet
+                                    continue
+
                             logger.info(
                                 f"📦 Complete packet received: {packet.hex(' ').upper()}"
                             )
@@ -590,8 +621,8 @@ class NibeHeatPump:
             self._send_with_space_parity(bytes([self.pump.ack]))
             time.sleep(0.05)
 
-            # Receive data packet
-            response = self._read_response(timeout=2.0)
+            # Receive data packet - filter for our specific parameter
+            response = self._read_response(timeout=2.0, filter_param=param_index)
 
             if response and param_index in response["parameters"]:
                 raw_value = response["parameters"][param_index]
