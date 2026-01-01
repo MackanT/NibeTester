@@ -586,7 +586,7 @@ class NibeHeatPump:
         return self.parameter_values.copy()
 
     def read_single_parameter(
-        self, param_index: int, timeout: float = 30.0
+        self, param_index: int, timeout: float = 10.0
     ) -> Optional[float]:
         """
         Read a single specific parameter from the pump.
@@ -1050,7 +1050,7 @@ def main():
             print("")
             time.sleep(1)
 
-            value = pump.read_single_parameter(param_idx, timeout=10.0)
+            value = pump.read_single_parameter(param_idx, timeout=30.0)
 
             if value is not None:
                 param = pump.parameters.get(param_idx)
