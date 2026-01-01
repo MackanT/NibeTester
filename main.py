@@ -155,6 +155,10 @@ class NibeProtocol:
         checksum_received = data[expected_size - 1]
         checksum_calc = NibeProtocol.calc_checksum(data[0 : expected_size - 1])
 
+        logger.info(
+            f"Checksum validation: received=0x{checksum_received:02X}, calculated=0x{checksum_calc:02X}"
+        )
+
         if checksum_received != checksum_calc:
             logger.warning(
                 f"Checksum mismatch: {checksum_received:02X} != {checksum_calc:02X}"
