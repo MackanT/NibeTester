@@ -432,23 +432,6 @@ class NibeHeatPump:
                                     logger.debug(
                                         f"⏩ Packet doesn't contain parameter 0x{filter_param:02X}, skipping"
                                     )
-                                    # Still need to complete protocol cycle: send ACK and wait for ETX
-                                    logger.debug(
-                                        "📤 Sending ACK (acknowledging skipped packet)..."
-                                    )
-                                    self._send_with_space_parity(bytes([self.pump.ack]))
-                                    time.sleep(0.05)
-
-                                    # Wait for ETX
-                                    etx_start = time.time()
-                                    while time.time() - etx_start < 1.0:
-                                        if self.serial.in_waiting > 0:
-                                            byte = self.serial.read(1)
-                                            if byte[0] == self.pump.etx:
-                                                logger.debug("✅ Received ETX")
-                                                break
-                                        time.sleep(0.01)
-
                                     buffer = buffer[packet_size:]  # Skip this packet
                                     continue
 
