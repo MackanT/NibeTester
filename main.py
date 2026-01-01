@@ -849,9 +849,8 @@ class NibeHeatPump:
 
             # Data payload: 00 <param_index> <value_bytes> (same format as reads)
             data_payload = [0x00, param_index] + value_bytes
-            # Length field = payload size ONLY (checksum NOT included)
-            # This matches READ packets: C0 00 24 13 [19 payload bytes] checksum
-            data_length = len(data_payload)
+            # Length field = payload size + 1 for checksum byte
+            data_length = len(data_payload) + 1
 
             # Build full packet: C0 00 14 <len> <payload>
             packet = [
