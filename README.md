@@ -261,7 +261,7 @@ NIBE_360P_PARAMETERS = [
     Register(0x0C, "Förskjutning värmekurva", 1, 1.0, "", False, "M2.2", -10, 10),
     Register(0x0D, "Beräknad framledningstemp.", 1, 1.0, "°C", False, "M2.0"),
     Register(0x13, "Kompressor", 1, 1.0, "", False, ""),  # Bitmask!
-    # Register(0x13, "Cirkulationspump 1", 1, 1.0, "", False, "M9.1.4"), # Do something with bitmask!
+    # Register(0x13, "Cirkulationspump 1", 1, 1.0, "", False, "M9.1.4"),
     Register(
         0x14, "Tillsatsvärme", 2, 1.0, "", False, ""
     ),  # Do something with bitmask!

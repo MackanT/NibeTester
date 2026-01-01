@@ -147,6 +147,59 @@ pumps:
         unit: ""
         writable: false
         menu_structure: ""
+        bit_fields:
+          - name: "Tillsatsvärme"
+            mask: 0xE000
+            sort_order: 1
+            value_map:
+              0: "Från"
+              1: "Elsteg I (3kW)"
+              2: "Elsteg II (4.5kW)"
+              3: "Elsteg III (6kW)"
+              4: "Elsteg I + II (7.5kW)"
+              5: "Elsteg I + III (9kW)"
+              6: "Elsteg II + III (10.5kW)"
+              7: "Elsteg I + II + III (13.5kW)"
+          - name: "Driftläge säsong"
+            mask: 0x0030
+            sort_order: 2
+            value_map:
+              0: "Sommar"
+              1: "Vår/Höst"
+              2: "Vinter"
+          - name: "Elpanna"
+            mask: 0x0100
+            sort_order: 3
+            value_map:
+              0: "Från"
+              1: "Till"
+          - name: "Fläkthastighet"
+            mask: 0x1800
+            sort_order: 4
+            value_map:
+              0: "Från"
+              1: "Hast I"
+              2: "Normal"
+              3: "Hast II"
+          - name: "Avfrostning"
+            mask: 0x0400
+            sort_order: 5
+            value_map:
+              0: "Från"
+              1: "Till"
+          - name: "Kompensering yttre (indikation om aktiv)"
+            mask: 0x0004
+            sort_order: 6
+            value_map:
+              0: "Från"
+              1: "Till"
+          - name: "Kompensering yttre 2 (indikation om aktiv)"
+            mask: 0x0008
+            sort_order: 7
+            value_map:
+              0: "Från"
+              1: "Till"
+
       - id: 0x15
         name: "Driftläge auto"
         size: 2
