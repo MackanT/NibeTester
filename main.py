@@ -1188,10 +1188,11 @@ def main():
     print("  1) Read parameters (normal operation)")
     print("  2) Read single parameter")
     print("  3) Write parameter value")
+    print("  4) Send custom packet (testing)")
     print("  9) Capture bus traffic (diagnostic mode)")
     print("")
 
-    choice = input("Choose option [1/2/3/9] (default: 1): ").strip() or "1"
+    choice = input("Choose option [1/2/3/4/9] (default: 1): ").strip() or "1"
     print("")
 
     logger.info("")
@@ -1470,6 +1471,76 @@ def main():
                         )
             else:
                 print("\n❌ Write failed!")
+
+        # Send custom packet
+        if choice == "4":
+            print("\n" + "=" * FULL_LINE)
+            print("  SEND CUSTOM PACKET")
+            print("=" * FULL_LINE)
+            print("\nSending test packet: C0 00 14 03 00 1E 26 EF\n")
+            time.sleep(1)
+
+            # Wait for pump to address us
+            if not pump._wait_for_addressing(timeout=5.0):
+                print("❌ Pump did not address RCU")
+            else:
+                # Clear buffer
+                pump.serial.reset_input_buffer()
+
+                # Send ENQ
+                logger.info("📤 Sending ENQ (write request)...")
+                pump._send_with_space_parity(bytes([pump.pump.enq]))
+                time.sleep(0.05)
+
+                # Wait for ACK from pump
+                logger.debug("⏳ Waiting for pump ACK...")
+                ack_start = time.time()
+                pump_acked = False
+                while time.time() - ack_start < 2.0:
+                    if pump.serial.in_waiting > 0:
+                        byte = pump.serial.read(1)
+                        logger.debug(f"   Received byte: 0x{byte[0]:02X}")
+                        if byte[0] == pump.pump.ack:
+                            logger.info("✅ Pump acknowledged write request")
+                            pump_acked = True
+                            break
+                    time.sleep(0.01)
+
+                if not pump_acked:
+                    print("❌ Pump did not acknowledge ENQ")
+                else:
+                    # Send custom packet
+                    custom_packet = bytes(
+                        [0xC0, 0x00, 0x14, 0x03, 0x00, 0x1E, 0x26, 0xEF]
+                    )
+                    logger.info(
+                        f"📤 Sending custom packet: {custom_packet.hex(' ').upper()}"
+                    )
+                    pump._send_with_space_parity(custom_packet)
+                    time.sleep(0.15)
+
+                    # Wait for response
+                    logger.info("⏳ Waiting for pump response...")
+                    response_start = time.time()
+                    while time.time() - response_start < 3.0:
+                        if pump.serial.in_waiting > 0:
+                            byte = pump.serial.read(1)
+                            logger.info(f"   Received byte: 0x{byte[0]:02X}")
+                            if byte[0] == pump.pump.ack:
+                                logger.info("✅ Pump sent ACK!")
+                                # Send ETX
+                                pump.serial.parity = serial.PARITY_MARK
+                                pump.serial.write(bytes([pump.pump.etx]))
+                                pump.serial.flush()
+                                logger.info("📤 Sent *ETX")
+                                print("\n✅ Custom packet sent successfully!\n")
+                                break
+                            elif byte[0] == pump.pump.nak:
+                                logger.error("❌ Pump sent NAK")
+                                break
+                        time.sleep(0.01)
+                    else:
+                        logger.error("❌ Timeout waiting for response")
 
     except KeyboardInterrupt:
         print("\n\n⚠️ Interrupted by user")
