@@ -839,8 +839,10 @@ class NibeHeatPump:
 
             # Data payload: 00 <param_index> <value_bytes> (same format as reads)
             data_payload = [0x00, param_index] + value_bytes
-            # Length is data payload only - checksum NOT included per protocol spec
-            data_length = len(data_payload)
+            # CRITICAL: Length field includes BOTH data AND checksum!
+            # Based on READ parsing: payload = data[4 : 4 + length - 1]
+            # This means length = data_bytes + checksum_byte
+            data_length = len(data_payload) + 1  # +1 for checksum that comes after
 
             # Build full packet: C0 00 14 <len> <payload>
             packet = [
@@ -925,11 +927,15 @@ class NibeHeatPump:
                         logger.warning(
                             "❌ Pump rejected write (NAK - checksum error), retrying..."
                         )
+                        # Switch back to MARK parity for addressing detection
+                        self.serial.parity = serial.PARITY_MARK
                         break  # Try again
                     else:
                         logger.warning(
                             f"   Unexpected byte during ACK/NAK wait: 0x{byte[0]:02X}"
                         )
+                        # Switch back to MARK parity for addressing detection
+                        self.serial.parity = serial.PARITY_MARK
                         break  # Try again
                 time.sleep(0.01)
             else:
