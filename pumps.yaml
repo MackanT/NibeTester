@@ -115,12 +115,24 @@ pumps:
         writable: false
         menu_structure: "M2.0"
       - id: 0x13
-        name: "Kompressor"
+        name: "Kompressor & Cirkulationspumpar"
         size: 1
         factor: 1.0
         unit: ""
         writable: false
         menu_structure: ""
+        bit_fields:
+          - name: "Kompressor"
+            mask: 0x02
+            bit_index: 1
+
+          - name: "Cirkulationspump 1"
+            mask: 0x40
+            bit_index: 6
+
+          - name: "Cirkulationspump 2"
+            mask: 0x01
+            bit_index: 0
       - id: 0x14
         name: "Tillsatsvärme"
         size: 2

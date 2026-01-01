@@ -28,6 +28,15 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class BitField:
+    """Bit field definition for registers with multiple boolean flags"""
+
+    name: str  # Name of the bit field (e.g., "Kompressor")
+    mask: int  # Bitmask to extract the bit (e.g., 0x02, 0x40)
+    bit_index: Optional[int] = None  # Optional bit position for clarity (0-7 or 0-15)
+
+
+@dataclass
 class Register:
     """Register definition for Nibe communication"""
 
@@ -41,6 +50,9 @@ class Register:
     min_value: int = None  # Optional min value
     max_value: int = None  # Optional max value
     step_size: int = None  # Optional step size
+    bit_fields: Optional[List[BitField]] = (
+        None  # Optional bit fields for bitmask registers
+    )
 
 
 @dataclass
@@ -210,7 +222,10 @@ class NibeHeatPump:
         self.port = port
         self.serial: Optional[serial.Serial] = None
         self.parameters: Dict[int, Register] = {}
-        self.parameter_values: Dict[int, float] = {}
+        self.parameter_values: Dict[int, float] = {}  # Regular parameter values
+        self.bit_field_values: Dict[
+            str, bool
+        ] = {}  # Bit field values (key: "0x13:Kompressor")
         self.pump: Pump = pump_info
 
         if parameters:
@@ -458,11 +473,24 @@ class NibeHeatPump:
                 for param_idx, raw_value in response["parameters"].items():
                     if param_idx in self.parameters:
                         param = self.parameters[param_idx]
-                        actual_value = raw_value / param.factor
-                        self.parameter_values[param_idx] = actual_value
-                        logger.debug(
-                            f"   [{param_idx:02X}] {param.name}: {actual_value:.1f} {param.unit}"
-                        )
+
+                        # Check if this is a bitmask register
+                        if param.bit_fields:
+                            # Extract individual bit fields
+                            for bit_field in param.bit_fields:
+                                bit_value = bool(raw_value & bit_field.mask)
+                                key = f"0x{param_idx:02X}:{bit_field.name}"
+                                self.bit_field_values[key] = bit_value
+                                logger.debug(
+                                    f"   [{param_idx:02X}] {bit_field.name}: {'ON' if bit_value else 'OFF'} (mask=0x{bit_field.mask:02X})"
+                                )
+                        else:
+                            # Regular parameter with factor
+                            actual_value = raw_value / param.factor
+                            self.parameter_values[param_idx] = actual_value
+                            logger.debug(
+                                f"   [{param_idx:02X}] {param.name}: {actual_value:.1f} {param.unit}"
+                            )
 
                 # Step 4: Send ACK to confirm receipt
                 logger.info("📤 Sending ACK (data received OK)...")
@@ -498,6 +526,15 @@ class NibeHeatPump:
     def get_all_values(self) -> Dict[int, float]:
         """Get all cached parameter values"""
         return self.parameter_values.copy()
+
+    def get_bit_field(self, param_index: int, bit_field_name: str) -> Optional[bool]:
+        """Get cached bit field value"""
+        key = f"0x{param_index:02X}:{bit_field_name}"
+        return self.bit_field_values.get(key)
+
+    def get_all_bit_fields(self) -> Dict[str, bool]:
+        """Get all cached bit field values"""
+        return self.bit_field_values.copy()
 
 
 def load_from_yaml(
@@ -629,6 +666,28 @@ def load_from_yaml(
                 f"Register '{item['name']}' in pump '{pump_name}' missing required field: writable"
             )
 
+        # Parse bit fields if present
+        bit_fields = None
+        if "bit_fields" in item:
+            bit_fields = []
+            for bf in item["bit_fields"]:
+                if "name" not in bf or "mask" not in bf:
+                    raise ValueError(
+                        f"Bit field in register '{item['name']}' must have 'name' and 'mask'"
+                    )
+                mask_val = _parse_byte_val(bf["mask"], None)
+                if mask_val is None:
+                    raise ValueError(
+                        f"Invalid mask value '{bf['mask']}' in bit field '{bf['name']}'"
+                    )
+                bit_fields.append(
+                    BitField(
+                        name=bf["name"],
+                        mask=mask_val,
+                        bit_index=bf.get("bit_index"),
+                    )
+                )
+
         reg = Register(
             index=index_val,
             name=item["name"],
@@ -640,6 +699,7 @@ def load_from_yaml(
             min_value=item.get("min_value"),
             max_value=item.get("max_value"),
             step_size=item.get("step_size"),
+            bit_fields=bit_fields,
         )
         registers.append(reg)
 
@@ -729,17 +789,30 @@ def main():
             time.sleep(2)
 
             values = pump.read_parameters_once()
+            bit_fields = pump.get_all_bit_fields()
 
-            if values:
+            if values or bit_fields:
+                total_count = len(values) + len(bit_fields)
                 print("\n" + "=" * 35)
-                print(f"  SUCCESS! Captured {len(values)} parameters:")
+                print(f"  SUCCESS! Captured {total_count} parameters:")
                 print("=" * 35)
                 print()
+
+                # Display regular parameters
                 for idx in sorted(values.keys()):
                     param = pump.parameters[idx]
                     print(
                         f"  [{idx:02X}] {param.name:.<35} {values[idx]:>8.1f} {param.unit:<5} {param.menu_structure}"
                     )
+
+                # Display bit fields
+                if bit_fields:
+                    print()
+                    print("  Bit Fields:")
+                    for key in sorted(bit_fields.keys()):
+                        status = "ON " if bit_fields[key] else "OFF"
+                        print(f"  {key:.<45} {status}")
+
                 print()
             else:
                 print("\n❌ No parameters received!")
@@ -750,13 +823,21 @@ def main():
 
         # Show what we captured so far
         values = pump.get_all_values()
-        if values:
+        bit_fields = pump.get_all_bit_fields()
+
+        if values or bit_fields:
             print("\n📊 Partial Results:")
             print("=" * 70)
             for idx in sorted(values.keys()):
                 if idx in pump.parameters:
                     param = pump.parameters[idx]
                     print(f"  [{idx:02X}] {param.name}: {values[idx]} {param.unit}")
+
+            if bit_fields:
+                print("\n  Bit Fields:")
+                for key in sorted(bit_fields.keys()):
+                    status = "ON" if bit_fields[key] else "OFF"
+                    print(f"  {key}: {status}")
     finally:
         pump.disconnect()
         print("\n✅ Disconnected\n")
