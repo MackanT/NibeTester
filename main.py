@@ -835,8 +835,8 @@ class NibeHeatPump:
                 )
                 return False
 
-            # Data payload: 06 <param_index> <value_bytes> (06 = write function code)
-            data_payload = [0x06, param_index] + value_bytes
+            # Data payload: 00 <param_index> <value_bytes> (same format as reads)
+            data_payload = [0x00, param_index] + value_bytes
             data_length = len(data_payload) + 1  # +1 for checksum
 
             # Build full packet: C0 00 14 <len> <payload>
@@ -880,6 +880,12 @@ class NibeHeatPump:
                         logger.debug(
                             f"Sent *ETX: {self.pump.etx:02X} (with 9th bit set)"
                         )
+
+                        # Wait for pump to complete write and restart addressing cycle
+                        time.sleep(2.0)
+                        # Clear any residual data from buffers
+                        self.serial.reset_input_buffer()
+                        self.serial.reset_output_buffer()
 
                         print(f"\n{'=' * FULL_LINE}")
                         print("  ✅ WRITE SUCCESSFUL!")
