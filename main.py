@@ -444,8 +444,17 @@ class NibeHeatPump:
 
         cycles_with_new_data = 0
         max_cycles_without_new = 3  # Stop after 3 cycles with no new parameters
+        max_total_time = 10.0  # Maximum 10 seconds for entire read operation
+        start_time = time.time()
 
         while cycles_with_new_data < max_cycles_without_new:
+            # Check if we've exceeded maximum time
+            if time.time() - start_time > max_total_time:
+                logger.warning(
+                    f"⏱️ Maximum read time ({max_total_time}s) exceeded. Stopping."
+                )
+                break
+
             # Step 1: Wait for pump to address RCU
             if not self._wait_for_addressing(timeout=15.0):
                 logger.warning("Timeout waiting for pump. Stopping.")
