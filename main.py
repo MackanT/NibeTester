@@ -846,13 +846,13 @@ class NibeHeatPump:
             checksum = NibeProtocol.calc_checksum(packet)
             packet.append(checksum)
 
-            # Send data packet with MARK parity (9th bit = 1)
+            # Send data packet with SPACE parity (9th bit = 0)
             packet_bytes = bytes(packet)
             logger.info(f"📤 Sending write packet: {packet_bytes.hex(' ').upper()}")
             logger.info(
                 f"   Param: 0x{param_index:02X}, Raw value: {raw_value} (0x{raw_value:04X}), Bytes: {' '.join(f'{b:02X}' for b in value_bytes)}"
             )
-            self._send_with_mark_parity(packet_bytes)
+            self._send_with_space_parity(packet_bytes)
             time.sleep(0.1)
 
             # Wait for ACK or NAK
