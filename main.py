@@ -389,8 +389,10 @@ class NibeHeatPump:
         buffer = bytearray()
 
         while time.time() - start_time < timeout:
-            if self.serial.in_waiting > 0:
-                data = self.serial.read(self.serial.in_waiting)
+            # Read up to 256 bytes at a time (or whatever is available)
+            # This prevents blocking on serial.read() with exact byte counts
+            data = self.serial.read(256)
+            if data:
                 buffer.extend(data)
                 logger.debug(f"Buffer: {buffer.hex(' ').upper()}")
 
