@@ -861,7 +861,7 @@ def main():
                                     else:
                                         display_value = str(raw_value)
                                     print(
-                                        f"      [{idx:02X}.{i}] {bit_field.name:.<30} {display_value}"
+                                        f"      [{idx:02X}.{i}] {bit_field.name:.<29} {display_value:>8}"
                                     )
                         else:
                             # Regular parameter
@@ -916,7 +916,7 @@ def main():
                                 else:
                                     display_value = str(raw_value)
                                 print(
-                                    f"      [{idx:02X}.{i}] {bit_field.name}: {display_value}"
+                                    f"      [{idx:02X}.{i}] {bit_field.name:.<29} {display_value:>8}"
                                 )
                     else:
                         # Regular parameter
