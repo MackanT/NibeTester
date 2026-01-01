@@ -55,6 +55,7 @@ class Register:
     factor: float = 1.0  # Division factor for value
     unit: str = ""
     writable: bool = False
+    data_type: Optional[str] = None  # Required if writable: s8, u8, s16, u16, s32, u32
     menu_structure: str = ""  # Optional menu structure
     min_value: int = None  # Optional min value
     max_value: int = None  # Optional max value
@@ -697,7 +698,7 @@ class NibeHeatPump:
         return None
 
     def write_parameter(
-        self, param_index: int, value: float, timeout: float = 10.0
+        self, param_index: int, value: float, timeout: float = 30.0
     ) -> bool:
         """
         Write a value to a specific parameter.
@@ -713,7 +714,7 @@ class NibeHeatPump:
         Args:
             param_index: The register index to write (e.g., 0x01)
             value: The value to write (will be multiplied by factor)
-            timeout: Maximum time to wait (seconds)
+            timeout: Maximum time to wait for write success (seconds)
 
         Returns:
             True if write successful, False otherwise
@@ -737,7 +738,7 @@ class NibeHeatPump:
             )
             print(f"New value: {value} {param.unit}")
 
-            # Convert value using factor
+            # Convert value using factor and data type
             raw_value = int(value * param.factor)
 
             # Check bounds if specified
@@ -755,97 +756,133 @@ class NibeHeatPump:
         print(f"Raw value to write: {raw_value} (0x{raw_value:04X})\n")
 
         start_time = time.time()
+        attempt = 0
 
-        # Wait for pump to address us
-        if not self._wait_for_addressing(timeout=5.0):
-            logger.error("❌ Timeout waiting for addressing")
-            return False
+        while time.time() - start_time < timeout:
+            attempt += 1
+            if attempt > 1:
+                logger.info(f"🔄 Retry attempt {attempt}...")
 
-        # Send ENQ (0x05) to signal write intent
-        logger.info("📤 Sending ENQ (write request)...")
-        self._send_with_space_parity(bytes([self.pump.enq]))
-        time.sleep(0.05)
+            # Wait for pump to address us
+            if not self._wait_for_addressing(timeout=5.0):
+                logger.debug("⏭️  No addressing, waiting before retry...")
+                time.sleep(1.0)
+                continue
 
-        # Wait for ACK from pump
-        logger.debug("⏳ Waiting for pump ACK...")
-        ack_start = time.time()
-        while time.time() - ack_start < 2.0:
-            if self.serial.in_waiting > 0:
-                byte = self.serial.read(1)
-                if byte[0] == self.pump.ack:
-                    logger.info("✅ Pump acknowledged write request")
-                    break
-            time.sleep(0.01)
-        else:
-            logger.error("❌ Timeout waiting for pump ACK")
-            return False
+            # Send ENQ (0x05) to signal write intent
+            logger.info("📤 Sending ENQ (write request)...")
+            self._send_with_space_parity(bytes([self.pump.enq]))
+            time.sleep(0.05)
 
-        # Build data packet
-        # Format: C0 00 14 <len> 00 <param_index> <value_bytes> <checksum>
-        param_size = 2  # Default to 2 bytes
-        if param and param.size:
+            # Wait for ACK from pump
+            logger.debug("⏳ Waiting for pump ACK...")
+            ack_start = time.time()
+            pump_acked = False
+            while time.time() - ack_start < 2.0:
+                if self.serial.in_waiting > 0:
+                    byte = self.serial.read(1)
+                    if byte[0] == self.pump.ack:
+                        logger.info("✅ Pump acknowledged write request")
+                        pump_acked = True
+                        break
+                time.sleep(0.01)
+
+            if not pump_acked:
+                logger.warning("❌ Timeout waiting for pump ACK, retrying...")
+                continue
+
+            # Build data packet
+            # Format: C0 00 14 <len> 00 <param_index> <value_bytes> <checksum>
+            # Parameter MUST be defined - no defaults
+            if not param:
+                logger.error(
+                    f"❌ Parameter 0x{param_index:02X} not defined in YAML! Cannot write."
+                )
+                return False
+
+            if param.data_type is None:
+                logger.error(
+                    f"❌ Parameter 0x{param_index:02X} is missing data_type in YAML!"
+                )
+                return False
+
             param_size = param.size
+            data_type = param.data_type
 
-        if param_size == 1:
-            # Single byte parameter
-            # Handle signed values
-            if raw_value < 0:
-                raw_value = raw_value + 256
-            value_bytes = [raw_value & 0xFF]
-        else:
-            # Two byte parameter (HIGH byte first, LOW byte second)
-            # Handle signed values
-            if raw_value < 0:
-                raw_value = raw_value + 65536
-            value_high = (raw_value >> 8) & 0xFF
-            value_low = raw_value & 0xFF
-            value_bytes = [value_high, value_low]
+            # Convert based on data type
+            if param_size == 1:
+                # Single byte parameter
+                if data_type == "u8":
+                    # Unsigned 8-bit (0-255)
+                    value_bytes = [raw_value & 0xFF]
+                else:  # s8 - signed 8-bit (-128 to 127)
+                    if raw_value < 0:
+                        raw_value = raw_value + 256
+                    value_bytes = [raw_value & 0xFF]
+            else:
+                # Two byte parameter (HIGH byte first, LOW byte second)
+                if data_type == "u16":
+                    # Unsigned 16-bit (0-65535)
+                    value_high = (raw_value >> 8) & 0xFF
+                    value_low = raw_value & 0xFF
+                    value_bytes = [value_high, value_low]
+                else:  # s16 - signed 16-bit (-32768 to 32767)
+                    if raw_value < 0:
+                        raw_value = raw_value + 65536
+                    value_high = (raw_value >> 8) & 0xFF
+                    value_low = raw_value & 0xFF
+                    value_bytes = [value_high, value_low]
 
-        # Data payload: 00 <param_index> <value_bytes>
-        data_payload = [0x00, param_index] + value_bytes
-        data_length = len(data_payload) + 1  # +1 for checksum
+            # Data payload: 00 <param_index> <value_bytes>
+            data_payload = [0x00, param_index] + value_bytes
+            data_length = len(data_payload) + 1  # +1 for checksum
 
-        # Build full packet: C0 00 14 <len> <payload>
-        packet = [
-            self.pump.cmd_data,  # C0
-            0x00,
-            self.pump.rcu_addr,  # 14 (our address as sender)
-            data_length,
-        ] + data_payload
+            # Build full packet: C0 00 14 <len> <payload>
+            packet = [
+                self.pump.cmd_data,  # C0
+                0x00,
+                self.pump.rcu_addr,  # 14 (our address as sender)
+                data_length,
+            ] + data_payload
 
-        # Calculate checksum
-        checksum = NibeProtocol.calc_checksum(packet)
-        packet.append(checksum)
+            # Calculate checksum
+            checksum = NibeProtocol.calc_checksum(packet)
+            packet.append(checksum)
 
-        # Send data packet
-        packet_bytes = bytes(packet)
-        logger.info(f"📤 Sending write packet: {packet_bytes.hex(' ').upper()}")
-        self._send_with_space_parity(packet_bytes)
-        time.sleep(0.1)
+            # Send data packet
+            packet_bytes = bytes(packet)
+            logger.info(f"📤 Sending write packet: {packet_bytes.hex(' ').upper()}")
+            self._send_with_space_parity(packet_bytes)
+            time.sleep(0.1)
 
-        # Wait for ACK or NAK
-        logger.debug("⏳ Waiting for pump response (ACK/NAK)...")
-        response_start = time.time()
-        while time.time() - response_start < 2.0:
-            if self.serial.in_waiting > 0:
-                byte = self.serial.read(1)
-                if byte[0] == self.pump.ack:
-                    logger.info("✅ Pump acknowledged write (ACK)")
+            # Wait for ACK or NAK
+            logger.debug("⏳ Waiting for pump response (ACK/NAK)...")
+            response_start = time.time()
+            while time.time() - response_start < 2.0:
+                if self.serial.in_waiting > 0:
+                    byte = self.serial.read(1)
+                    if byte[0] == self.pump.ack:
+                        logger.info("✅ Pump acknowledged write (ACK)")
 
-                    # Send ETX to complete transaction
-                    logger.info("📤 Sending ETX (complete)...")
-                    self._send_with_space_parity(bytes([self.pump.etx]))
+                        # Send ETX to complete transaction
+                        logger.info("📤 Sending ETX (complete)...")
+                        self._send_with_space_parity(bytes([self.pump.etx]))
 
-                    print(f"\n{'=' * FULL_LINE}")
-                    print("  ✅ WRITE SUCCESSFUL!")
-                    print(f"{'=' * FULL_LINE}\n")
-                    return True
-                elif byte[0] == self.pump.nak:
-                    logger.error("❌ Pump rejected write (NAK - checksum error)")
-                    return False
-            time.sleep(0.01)
+                        print(f"\n{'=' * FULL_LINE}")
+                        print("  ✅ WRITE SUCCESSFUL!")
+                        print(f"{'=' * FULL_LINE}\n")
+                        return True
+                    elif byte[0] == self.pump.nak:
+                        logger.warning(
+                            "❌ Pump rejected write (NAK - checksum error), retrying..."
+                        )
+                        break  # Try again
+                time.sleep(0.01)
+            else:
+                logger.warning("❌ Timeout waiting for pump response, retrying...")
+                continue
 
-        logger.error("❌ Timeout waiting for pump response")
+        logger.error(f"❌ Write failed after {timeout}s timeout")
         return False
 
     def get_value(self, param_index: int) -> Optional[float]:
@@ -993,6 +1030,12 @@ def load_from_yaml(file_path: str, pump_name: str) -> Tuple[List[Register], Pump
                 f"Register '{item['name']}' in pump '{pump_name}' missing required field: writable"
             )
 
+        # If writable, data_type is required
+        if item["writable"] and "data_type" not in item:
+            raise ValueError(
+                f"Register '{item['name']}' in pump '{pump_name}' is writable but missing required field: data_type"
+            )
+
         # Parse bit fields if present
         bit_fields = None
         if "bit_fields" in item:
@@ -1043,6 +1086,9 @@ def load_from_yaml(file_path: str, pump_name: str) -> Tuple[List[Register], Pump
             factor=item["factor"],
             unit=item.get("unit", ""),
             writable=item["writable"],
+            data_type=item.get(
+                "data_type"
+            ),  # None for read-only, required for writable
             menu_structure=item.get("menu_structure", ""),
             min_value=item.get("min_value"),
             max_value=item.get("max_value"),
