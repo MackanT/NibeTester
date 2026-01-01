@@ -18,7 +18,7 @@ import yaml
 import sys
 
 FULL_LINE = 53
-
+TIMEOUT = 60
 
 # Setup logging
 logging.basicConfig(
@@ -1196,7 +1196,7 @@ def main():
             print("\nPress Ctrl+C to stop early...\n")
             time.sleep(2)
 
-            values = pump.read_parameters_once(timeout=30)
+            values = pump.read_parameters_once(timeout=TIMEOUT)
             bit_fields = pump.get_all_bit_fields()
 
             if values or bit_fields:
@@ -1282,7 +1282,7 @@ def main():
             print("")
             time.sleep(1)
 
-            value = pump.read_single_parameter(param_idx, timeout=30.0)
+            value = pump.read_single_parameter(param_idx, timeout=TIMEOUT)
 
             if value is not None:
                 param = pump.parameters.get(param_idx)
@@ -1371,7 +1371,7 @@ def main():
             # Get current value first
             print("\n📖 Reading current value...")
             time.sleep(1)
-            current_value = pump.read_single_parameter(param_idx, timeout=30.0)
+            current_value = pump.read_single_parameter(param_idx, timeout=TIMEOUT)
 
             if current_value is not None:
                 param = writable_params[param_idx]
