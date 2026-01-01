@@ -835,8 +835,8 @@ class NibeHeatPump:
                 )
                 return False
 
-            # Data payload: 00 <param_index> <value_bytes>
-            data_payload = [0x00, param_index] + value_bytes
+            # Data payload: 06 <param_index> <value_bytes> (06 = write function code)
+            data_payload = [0x06, param_index] + value_bytes
             data_length = len(data_payload) + 1  # +1 for checksum
 
             # Build full packet: C0 00 14 <len> <payload>
