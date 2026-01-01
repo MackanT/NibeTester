@@ -835,7 +835,7 @@ class NibeHeatPump:
         # size=1 means send 1 byte, size=2 means send 2 bytes (matches READ format)
         if param.size == 1:
             # Single byte parameter
-            value_bytes = [raw_value & 0xFF]
+            value_bytes = [0x00, raw_value & 0xFF]
         else:
             # Two byte parameter (HIGH byte first, LOW byte second)
             value_high = (raw_value >> 8) & 0xFF
@@ -886,10 +886,14 @@ class NibeHeatPump:
 
         # Wait for ACK or NAK (we're back in MARK parity now, consistent with ENQ handling)
         logger.info("⏳ Waiting for pump response (ACK/NAK)...")
+        logger.info(f"   Current parity mode: {self.serial.parity}")
+        logger.info(f"   Bytes in buffer: {self.serial.in_waiting}")
         response_start = time.time()
         response_bytes = []  # Track all bytes received
         while time.time() - response_start < 3.0:  # Increased timeout
-            if self.serial.in_waiting > 0:
+            in_waiting = self.serial.in_waiting
+            if in_waiting > 0:
+                logger.info(f"   📥 {in_waiting} byte(s) available in buffer")
                 byte = self.serial.read(1)
                 response_bytes.append(byte[0])
                 logger.info(
@@ -927,6 +931,11 @@ class NibeHeatPump:
                     )
                     return False
             time.sleep(0.01)
+            # Periodic check
+            if int((time.time() - response_start) * 10) % 10 == 0:  # Every second
+                logger.debug(
+                    f"   Still waiting... ({int(time.time() - response_start)}s elapsed, buffer: {self.serial.in_waiting} bytes)"
+                )
 
         # Timeout waiting for response
         if response_bytes:
