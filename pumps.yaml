@@ -144,7 +144,7 @@ pumps:
               1: "Till"
             writable: false
       - id: 0x14
-        name: "Tillsatsvärme"
+        name: "Tillsatsvärme, Driftläge, Säsong mm."
         size: 2
         factor: 1.0
         unit: ""
@@ -211,19 +211,90 @@ pumps:
             writable: false
 
       - id: 0x15
-        name: "Driftläge auto"
+        name: "Driftläge  & Varmvatten"
         size: 2
         factor: 1.0
         unit: ""
         writable: true
         menu_structure: "M8.2.1"
+        bit_fields:
+          - name: "Driftläge Auto"
+            mask: 0x8000
+            sort_order: 1
+            value_map:
+              0: "Från"
+              1: "Till"
+            writable: true
+          - name: "Extra varmvatten"
+            mask: 0x7000
+            sort_order: 2
+            value_map:
+              0: "Från"
+              1: "24 h"
+              2: "12 h"
+              3: "6 h"
+              4: "3 h"
+              5: "(5 används ej!)"
+              6: "Periodisk"
+              7: "Tidsinställd"
+            writable: true
+          - name: "Shuntgrupp 2"
+            mask: 0x0100
+            sort_order: 3
+            value_map:
+              0: "Från"
+              1: "Till"
+            writable: true
       - id: 0x16
-        name: "Högtryckslarm"
+        name: "Larm"
         size: 2
         factor: 1.0
         unit: ""
         writable: false
         menu_structure: ""
+        bit_fields:
+          - name: "Högtryckslarm"
+            mask: 0x0001
+            sort_order: 1
+            value_map:
+              0: "Inget larm"
+              1: "Larm"
+            writable: false
+          - name: "Lågtryckslarm"
+            mask: 0x0002
+            sort_order: 2
+            value_map:
+              0: "Inget larm"
+              1: "Larm"
+            writable: false
+          - name: "Temperaturbegränsarlarm"
+            mask: 0x0008
+            sort_order: 3
+            value_map:
+              0: "Inget larm"
+              1: "Larm"
+            writable: false
+          - name: "Filterlarm"
+            mask: 0x0200
+            sort_order: 4
+            value_map:
+              0: "Inget larm"
+              1: "Larm"
+            writable: false
+          - name: "Givarfel"
+            mask: 0x0100
+            sort_order: 5
+            value_map:
+              0: "Inget larm"
+              1: "Larm"
+            writable: false
+          - name: "Frånluftstemperaturslarm"
+            mask: 0x0004
+            sort_order: 6
+            value_map:
+              0: "Inget larm"
+              1: "Larm"
+            writable: false
       - id: 0x17
         name: "Strömförbrukning L1"
         size: 2
@@ -311,12 +382,43 @@ pumps:
         min_value: 0
         max_value: 90
       - id: 0x25
-        name: "Starta om FIGHTER360P"
+        name: "Omstart och externa larm"
         size: 2
         factor: 1.0
         unit: ""
         writable: true
         menu_structure: ""
+        bit_fields:
+          - name: "Starta om FIGHTER 360"
+            mask: 0x0001
+            sort_order: 1
+            value_map:
+              0: "(normalläge)"
+              1: "Utför omstart"
+            writable: true
+          - name: "Extern larmsignal 1 (RCU D1 1)"
+            mask: 0x0002
+            sort_order: 2
+            value_map:
+              0: "Från"
+              1: "Till"
+            writable: false
+          - name: "Extern larmsignal 2 (RCU D1 2)"
+            mask: 0x0004
+            sort_order: 3
+            value_map:
+              0: "Från"
+              1: "Till"
+            writable: false
+          - name: "Golvtork"
+            mask: 0x0008
+            sort_order: 4
+            value_map:
+              0: "Från"
+              1: "Till"
+            writable: true
+            menu_structure: "M9.2.1"
+
       - id: 0x26
         name: "RCU förskjutning 1 (Reg1)"
         size: 1

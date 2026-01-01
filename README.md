@@ -293,7 +293,7 @@ NIBE_360P_PARAMETERS = [
     ),  ## UNDERSÖK -> 14
     Register(0x25, "Starta om FIGHTER360P", 2, 1.0, "", True, ""),
     # Register(0x25, "Extern larmsignal 1 (RCU DI 1)", 2, 1.0, "", False, ""),
-    # Register(0x25, "Extern larmsignal 2 (RCU DI 2)", 21, 1.0, "", False, ""),
+    # Register(0x25, "Extern larmsignal 2 (RCU DI 2)", 2, 1.0, "", False, ""),
     Register(0x26, "RCU förskjutning 1 (Reg1)", 1, 1.0, "", True, "M2.7", -10, 10),
     Register(0x28, "Larmnivå frånluftstemperatur", 1, 1.0, "°C", True, "M5.6", 0, 20),
     Register(0x29, "Klocka: år", 1, 1.0, "", False, "M7.1"),
