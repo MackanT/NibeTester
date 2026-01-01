@@ -806,32 +806,34 @@ class NibeHeatPump:
                 )
                 return False
 
-            param_size = param.size
             data_type = param.data_type
 
-            # Convert based on data type
-            if param_size == 1:
-                # Single byte parameter
-                if data_type == "u8":
-                    # Unsigned 8-bit (0-255)
-                    value_bytes = [raw_value & 0xFF]
-                else:  # s8 - signed 8-bit (-128 to 127)
-                    if raw_value < 0:
-                        raw_value = raw_value + 256
-                    value_bytes = [raw_value & 0xFF]
+            # Convert based on data_type (NOT size - size is for read parsing, data_type is for write encoding)
+            if data_type == "u8":
+                # Unsigned 8-bit (0-255)
+                value_bytes = [raw_value & 0xFF]
+            elif data_type == "s8":
+                # Signed 8-bit (-128 to 127)
+                if raw_value < 0:
+                    raw_value = raw_value + 256
+                value_bytes = [raw_value & 0xFF]
+            elif data_type == "u16":
+                # Unsigned 16-bit (0-65535) - always 2 bytes
+                value_high = (raw_value >> 8) & 0xFF
+                value_low = raw_value & 0xFF
+                value_bytes = [value_high, value_low]
+            elif data_type == "s16":
+                # Signed 16-bit (-32768 to 32767) - always 2 bytes
+                if raw_value < 0:
+                    raw_value = raw_value + 65536
+                value_high = (raw_value >> 8) & 0xFF
+                value_low = raw_value & 0xFF
+                value_bytes = [value_high, value_low]
             else:
-                # Two byte parameter (HIGH byte first, LOW byte second)
-                if data_type == "u16":
-                    # Unsigned 16-bit (0-65535)
-                    value_high = (raw_value >> 8) & 0xFF
-                    value_low = raw_value & 0xFF
-                    value_bytes = [value_high, value_low]
-                else:  # s16 - signed 16-bit (-32768 to 32767)
-                    if raw_value < 0:
-                        raw_value = raw_value + 65536
-                    value_high = (raw_value >> 8) & 0xFF
-                    value_low = raw_value & 0xFF
-                    value_bytes = [value_high, value_low]
+                logger.error(
+                    f"❌ Unknown data_type '{data_type}' for parameter 0x{param_index:02X}"
+                )
+                return False
 
             # Data payload: 00 <param_index> <value_bytes>
             data_payload = [0x00, param_index] + value_bytes
