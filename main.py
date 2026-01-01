@@ -702,6 +702,158 @@ class NibeHeatPump:
         )
         return None
 
+    def write_parameter(
+        self, param_index: int, value: float, timeout: float = 10.0
+    ) -> bool:
+        """
+        Write a value to a specific parameter.
+
+        Protocol flow:
+        1. Wait for addressing: *00 *14
+        2. Send ENQ (0x05) instead of ACK to signal write intent
+        3. Wait for ACK from pump
+        4. Send data packet: C0 00 14 <len> 00 <param> <value> <checksum>
+        5. Wait for ACK (success) or NAK (checksum error)
+        6. Send ETX to complete
+
+        Args:
+            param_index: The register index to write (e.g., 0x01)
+            value: The value to write (will be multiplied by factor)
+            timeout: Maximum time to wait (seconds)
+
+        Returns:
+            True if write successful, False otherwise
+        """
+        print(f"\n{'=' * FULL_LINE}")
+        print(f"✍️  Writing Parameter 0x{param_index:02X}")
+        print(f"{'=' * FULL_LINE}")
+
+        # Check if parameter is writable
+        if param_index in self.parameters:
+            param = self.parameters[param_index]
+            if not param.writable:
+                logger.error(
+                    f"❌ Parameter 0x{param_index:02X} ({param.name}) is not writable!"
+                )
+                return False
+
+            print(f"Parameter: {param.name}")
+            print(
+                f"Current value: {self.parameter_values.get(param_index, 'unknown')} {param.unit}"
+            )
+            print(f"New value: {value} {param.unit}")
+
+            # Convert value using factor
+            raw_value = int(value * param.factor)
+
+            # Check bounds if specified
+            if param.min_value is not None and raw_value < param.min_value:
+                logger.error(f"❌ Value {raw_value} below minimum {param.min_value}")
+                return False
+            if param.max_value is not None and raw_value > param.max_value:
+                logger.error(f"❌ Value {raw_value} above maximum {param.max_value}")
+                return False
+        else:
+            print(f"Warning: Register 0x{param_index:02X} not defined in YAML")
+            param = None
+            raw_value = int(value)
+
+        print(f"Raw value to write: {raw_value} (0x{raw_value:04X})\n")
+
+        start_time = time.time()
+
+        # Wait for pump to address us
+        if not self._wait_for_addressing(timeout=5.0):
+            logger.error("❌ Timeout waiting for addressing")
+            return False
+
+        # Send ENQ (0x05) to signal write intent
+        logger.info("📤 Sending ENQ (write request)...")
+        self._send_with_space_parity(bytes([self.pump.enq]))
+        time.sleep(0.05)
+
+        # Wait for ACK from pump
+        logger.debug("⏳ Waiting for pump ACK...")
+        ack_start = time.time()
+        while time.time() - ack_start < 2.0:
+            if self.serial.in_waiting > 0:
+                byte = self.serial.read(1)
+                if byte[0] == self.pump.ack:
+                    logger.info("✅ Pump acknowledged write request")
+                    break
+            time.sleep(0.01)
+        else:
+            logger.error("❌ Timeout waiting for pump ACK")
+            return False
+
+        # Build data packet
+        # Format: C0 00 14 <len> 00 <param_index> <value_bytes> <checksum>
+        param_size = 2  # Default to 2 bytes
+        if param and param.size:
+            param_size = param.size
+
+        if param_size == 1:
+            # Single byte parameter
+            # Handle signed values
+            if raw_value < 0:
+                raw_value = raw_value + 256
+            value_bytes = [raw_value & 0xFF]
+        else:
+            # Two byte parameter (HIGH byte first, LOW byte second)
+            # Handle signed values
+            if raw_value < 0:
+                raw_value = raw_value + 65536
+            value_high = (raw_value >> 8) & 0xFF
+            value_low = raw_value & 0xFF
+            value_bytes = [value_high, value_low]
+
+        # Data payload: 00 <param_index> <value_bytes>
+        data_payload = [0x00, param_index] + value_bytes
+        data_length = len(data_payload) + 1  # +1 for checksum
+
+        # Build full packet: C0 00 14 <len> <payload>
+        packet = [
+            self.pump.cmd_data,  # C0
+            0x00,
+            self.pump.rcu_addr,  # 14 (our address as sender)
+            data_length,
+        ] + data_payload
+
+        # Calculate checksum
+        checksum = NibeProtocol.calc_checksum(packet)
+        packet.append(checksum)
+
+        # Send data packet
+        packet_bytes = bytes(packet)
+        logger.info(f"📤 Sending write packet: {packet_bytes.hex(' ').upper()}")
+        self._send_with_space_parity(packet_bytes)
+        time.sleep(0.1)
+
+        # Wait for ACK or NAK
+        logger.debug("⏳ Waiting for pump response (ACK/NAK)...")
+        response_start = time.time()
+        while time.time() - response_start < 2.0:
+            if self.serial.in_waiting > 0:
+                byte = self.serial.read(1)
+                if byte[0] == self.pump.ack:
+                    logger.info("✅ Pump acknowledged write (ACK)")
+
+                    # Send ETX to complete transaction
+                    logger.info("📤 Sending ETX (complete)...")
+                    self._send_with_space_parity(bytes([self.pump.etx]))
+
+                    print(f"\n{'=' * FULL_LINE}")
+                    print("  ✅ WRITE SUCCESSFUL!")
+                    print(f"{'=' * FULL_LINE}\n")
+                    return True
+                elif byte[0] == self.pump.nak:
+                    logger.error("❌ Pump rejected write (NAK - checksum error)")
+                    return False
+            time.sleep(0.01)
+
+        logger.error("❌ Timeout waiting for pump response")
+        return False
+
     def get_value(self, param_index: int) -> Optional[float]:
         """Get cached parameter value"""
         return self.parameter_values.get(param_index)
@@ -934,10 +1086,11 @@ def main():
     print("Options:")
     print("  1) Read parameters (normal operation)")
     print("  2) Read single parameter")
+    print("  3) Write parameter value")
     print("  9) Capture bus traffic (diagnostic mode)")
     print("")
 
-    choice = input("Choose option [1/2/9] (default: 1): ").strip() or "1"
+    choice = input("Choose option [1/2/3/9] (default: 1): ").strip() or "1"
     print("")
 
     logger.info("")
@@ -1120,6 +1273,102 @@ def main():
             else:
                 print(f"\n❌ Parameter 0x{param_idx:02X} not received")
                 print("Try option 9 to diagnose bus traffic.")
+
+        # Write parameter
+        if choice == "3":
+            print("\n" + "=" * FULL_LINE)
+            print("  WRITE PARAMETER")
+            print("=" * FULL_LINE)
+            print("\nAvailable writable registers:")
+
+            # Show only writable registers
+            writable_params = {
+                idx: param for idx, param in pump.parameters.items() if param.writable
+            }
+
+            if not writable_params:
+                print("\n❌ No writable parameters defined in YAML!")
+                return
+
+            for idx in sorted(writable_params.keys()):
+                param = writable_params[idx]
+                min_max = ""
+                if param.min_value is not None or param.max_value is not None:
+                    min_max = f" [min: {param.min_value}, max: {param.max_value}]"
+                print(f"  0x{idx:02X} ({idx:3d}) - {param.name} {param.unit}{min_max}")
+
+            print("")
+            param_input = input(
+                "Enter register ID (hex like 0x01 or decimal like 1): "
+            ).strip()
+
+            # Parse input as hex or decimal
+            try:
+                if param_input.startswith("0x") or param_input.startswith("0X"):
+                    param_idx = int(param_input, 16)
+                else:
+                    param_idx = int(param_input)
+            except ValueError:
+                print(f"\n❌ Invalid input: {param_input}")
+                return
+
+            # Check if parameter is writable
+            if param_idx not in writable_params:
+                print(f"\n❌ Parameter 0x{param_idx:02X} is not writable!")
+                return
+
+            # Get current value first
+            print("\n📖 Reading current value...")
+            time.sleep(1)
+            current_value = pump.read_single_parameter(param_idx, timeout=10.0)
+
+            if current_value is not None:
+                param = writable_params[param_idx]
+                print(f"\nCurrent value: {current_value:.1f} {param.unit}")
+            else:
+                print("\n⚠️  Could not read current value")
+
+            # Get new value
+            value_input = input("\nEnter new value: ").strip()
+            try:
+                new_value = float(value_input)
+            except ValueError:
+                print(f"\n❌ Invalid value: {value_input}")
+                return
+
+            # Confirm
+            confirm = (
+                input(
+                    f"\n⚠️  Write {new_value} to register 0x{param_idx:02X}? (yes/no): "
+                )
+                .strip()
+                .lower()
+            )
+            if confirm not in ["yes", "y"]:
+                print("\n❌ Write cancelled")
+                return
+
+            print("")
+            time.sleep(1)
+
+            # Perform write
+            success = pump.write_parameter(param_idx, new_value, timeout=10.0)
+
+            if success:
+                # Verify by reading back
+                print("\n🔍 Verifying write...")
+                time.sleep(1)
+                verify_value = pump.read_single_parameter(param_idx, timeout=10.0)
+                if verify_value is not None:
+                    print(f"\nVerified value: {verify_value:.1f} {param.unit}")
+                    if abs(verify_value - new_value) < 0.1:
+                        print("✅ Write verified successfully!")
+                    else:
+                        print(
+                            f"⚠️  Warning: Read value ({verify_value}) differs from written value ({new_value})"
+                        )
+            else:
+                print("\n❌ Write failed!")
 
     except KeyboardInterrupt:
         print("\n\n⚠️ Interrupted by user")
