@@ -430,7 +430,7 @@ class NibeHeatPump:
         logger.warning("⏱️ Timeout waiting for response")
         return None
 
-    def read_parameters_once(self) -> Dict[int, float]:
+    def read_parameters_once(self, timeout: int = 10) -> Dict[int, float]:
         """
         Read one complete set of parameters from the pump.
 
@@ -451,15 +451,12 @@ class NibeHeatPump:
 
         cycles_with_new_data = 0
         max_cycles_without_new = 3  # Stop after 3 cycles with no new parameters
-        max_total_time = 10.0  # Maximum 10 seconds for entire read operation
         start_time = time.time()
 
         while cycles_with_new_data < max_cycles_without_new:
             # Check if we've exceeded maximum time
-            if time.time() - start_time > max_total_time:
-                logger.warning(
-                    f"⏱️ Maximum read time ({max_total_time}s) exceeded. Stopping."
-                )
+            if time.time() - start_time > timeout:
+                logger.warning(f"⏱️ Maximum read time ({timeout}s) exceeded. Stopping.")
                 break
 
             # Step 1: Wait for pump to address RCU
@@ -1148,7 +1145,7 @@ def main():
             print("\nPress Ctrl+C to stop early...\n")
             time.sleep(2)
 
-            values = pump.read_parameters_once()
+            values = pump.read_parameters_once(timeout=30)
             bit_fields = pump.get_all_bit_fields()
 
             if values or bit_fields:
