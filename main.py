@@ -682,21 +682,15 @@ class NibeHeatPump:
                         return float(raw_value)
                 else:
                     # Parameter not in this packet - complete protocol cycle and try again
-                    logger.debug(
-                        f"⏩ Packet doesn't contain parameter 0x{param_index:02X}, completing cycle..."
+                    params_in_packet = ", ".join(
+                        f"0x{p:02X}" for p in response["parameters"].keys()
+                    )
+                    logger.info(
+                        f"⏩ Packet has [{params_in_packet}] but not 0x{param_index:02X}, completing cycle..."
                     )
                     self._send_with_space_parity(bytes([self.pump.ack]))
                     time.sleep(0.05)
-
-                    # Wait for ETX before next cycle
-                    etx_start = time.time()
-                    while time.time() - etx_start < 1.0:
-                        if self.serial.in_waiting > 0:
-                            byte = self.serial.read(1)
-                            if byte[0] == self.pump.etx:
-                                logger.debug("✅ Received ETX")
-                                break
-                        time.sleep(0.01)
+                    # Don't wait for ETX - move quickly to catch next addressing
         logger.warning(
             f"⏱️ Timeout: Parameter 0x{param_index:02X} not received within {timeout}s"
         )
