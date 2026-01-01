@@ -128,21 +128,21 @@ pumps:
             value_map:
               0: "Från"
               1: "Till"
-            writeable: false
+            writable: false
           - name: "Cirkulationspump 1"
             mask: 0x40
             sort_order: 2
             value_map:
               0: "Från"
               1: "Till"
-            writeable: false
+            writable: false
           - name: "Cirkulationspump 2"
             mask: 0x01
             sort_order: 3
             value_map:
               0: "Från"
               1: "Till"
-            writeable: false
+            writable: false
       - id: 0x14
         name: "Tillsatsvärme"
         size: 2
@@ -163,7 +163,7 @@ pumps:
               5: "Elsteg I + III (9kW)"
               6: "Elsteg II + III (10.5kW)"
               7: "Elsteg I + II + III (13.5kW)"
-            writeable: false
+            writable: false
           - name: "Driftläge säsong"
             mask: 0x0030
             sort_order: 2
@@ -194,7 +194,7 @@ pumps:
             value_map:
               0: "Från"
               1: "Till"
-            writeable: false
+            writable: false
           - name: "Kompensering yttre (indikation om aktiv)"
             mask: 0x0004
             sort_order: 6
