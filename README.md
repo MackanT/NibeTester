@@ -44,11 +44,11 @@ uv sync
 
 ## Quick Start
 
-1. **Edit the serial port** in `main.py`:
+1. **Set the pump modell** in `main.py`:
    ```python
-   SERIAL_PORT = "/dev/ttyUSB0"  # Linux
-   # or
-   SERIAL_PORT = "COM3"  # Windows
+   """Main program"""
+
+    pump_model = "nibe_360P"
    ```
 
 2. **Run the program**:
@@ -57,12 +57,12 @@ uv sync
    ```
 
 3. **Choose mode**:
-   - Option 1: Diagnostic mode (captures raw bus traffic)
-   - Option 2: Normal mode (reads all parameters once)
+   - Option 1: Normal mode (reads all parameters once)
+   - Option 9: Diagnostic mode (captures raw bus traffic)
 
 ## How It Works
 
-The Nibe 360P uses a **master-slave protocol** where the heat pump (master) polls the room control unit (RCU/slave):
+The Nibe uses a **master-slave protocol** where the heat pump (master) polls the room control unit (RCU/slave):
 
 ### Protocol Flow
 
@@ -100,15 +100,15 @@ Example parameters:
 - `0x0B`: Heat curve slope (1 byte, raw value)
 - `0x02`: Hot water tank temperature (2 bytes, ÷10 = °C)
 
-See `nibe360p_active.py` for the complete parameter list.
+See `pump.yaml` for the complete parameter list.
 
 ## Usage Examples
 
 ### Reading All Parameters Once
 
 ```bash
-$ python nibe360p_active.py
-Choose option [1/2] (default: 2): 2
+$ python main.py
+Choose option [1/2] (default: 1): 1
 
 📖 Reading Parameters from Pump
 ======================================================================
@@ -121,9 +121,9 @@ Collecting all parameters... This may take a few cycles.
 ...
 📊 Collection Complete: 15 unique parameters
 
-🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉
+=====================================
   SUCCESS! Captured 15 parameters:
-🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉
+=====================================
 
   [01] Utetemperatur................       -2.3 °C
   [02] Temperatur VV-givare.........       48.5 °C
@@ -135,8 +135,8 @@ Collecting all parameters... This may take a few cycles.
 ### Diagnostic Mode
 
 ```bash
-$ python nibe360p_active.py
-Choose option [1/2] (default: 2): 1
+$ python main.py
+Choose option [1/2] (default: 1): 9
 
 📡 Capturing bus traffic for 15 seconds...
 
@@ -240,69 +240,6 @@ For code issues, please provide:
 - Complete error logs
 - Output from diagnostic mode (option 1)
 
-
-
-
-# Parameter definitions for Nibe 360P
-NIBE_360P_PARAMETERS = [
-    Register(0x00, "Produktkod", 1, 1.0, "", False, ""),
-    Register(
-        0x01, "Utetemperatur", 2, 10.0, "°C", False, "M4.0"
-    ),  ## Undersök, ~-5.4C. Medeltemp ute ~2.2C (M4.2)
-    Register(0x02, "Temperatur VV-givare", 2, 10.0, "°C", False, "M1.0"),
-    Register(0x03, "Avluftstemperatur", 2, 10.0, "°C", False, "M5.1"),
-    Register(0x04, "Frånluftstemperatur", 2, 10.0, "°C", False, "M5.2"),
-    Register(0x05, "Förångartemperatur", 2, 10.0, "°C", False, "M5.0"),
-    Register(0x06, "Framledningstemp.", 2, 10.0, "°C", False, "M2.0"),
-    Register(0x07, "Returtemperatur", 2, 10.0, "°C", False, "M2.6"),
-    Register(0x08, "Temperatur kompressorgivare", 2, 10.0, "°C", False, "M1.1"),
-    Register(0x09, "Temperatur elpatrongivare", 2, 10.0, "°C", False, "M1.2"),
-    Register(0x0B, "Kurvlutning", 1, 1.0, "", True, "M2.1", -1, 15, 1),
-    Register(0x0C, "Förskjutning värmekurva", 1, 1.0, "", False, "M2.2", -10, 10),
-    Register(0x0D, "Beräknad framledningstemp.", 1, 1.0, "°C", False, "M2.0"),
-    Register(0x13, "Kompressor", 1, 1.0, "", False, ""),  # Bitmask!
-    # Register(0x13, "Cirkulationspump 1", 1, 1.0, "", False, "M9.1.4"),
-    Register(
-        0x14, "Tillsatsvärme", 2, 1.0, "", False, ""
-    ),  # Do something with bitmask!
-    # Register(0x14, "Driftläge säsong", 2, 1.0, "", True, ""), # Do something with bitmask!
-    # Register(0x14, "Elpanna", 2, 1.0, "", True, "M9.1.1"),
-    # Register(0x14, "Fläkthastighet", 2, 1.0, "", True, "", 0, 3), ##TODO menu
-    # Register(0x14, "Avfrostning", 2, 1.0, "", True, ""),
-    Register(
-        0x15, "Driftläge auto", 2, 1.0, "", True, "M8.2.1"
-    ),  ## Undersök, ska vara Ja
-    Register(0x16, "Högtryckslarm", 2, 1.0, "", False, ""),
-    # Register(0x16, "Lågtryckslarm", 2, 1.0, "", False, ""),
-    # Register(0x16, "Temperaturbegränsarlarm", 2, 1.0, "", False, ""),
-    # Register(0x16, "Filterlarm", 2, 1.0, "", False, ""),
-    # Register(0x16, "Givarfel", 2, 1.0, "", False, ""),
-    # Register(0x16, "Frånluftstemperaturslarm", 2, 1.0, "", False, ""),
-    Register(0x17, "Strömförbrukning L1", 2, 10.0, "A", False, "M8.3.3"),
-    Register(0x18, "Strömförbrukning L2", 2, 10.0, "A", False, "M8.3.4"),
-    Register(0x19, "Strömförbrukning L3", 2, 10.0, "A", False, "M8.3.5"),
-    Register(0x1A, "Fabriksinställning", 1, 1.0, "", True, "M9.1.6"),
-    Register(0x1B, "Antal starter kompressor", 2, 1.0, "", False, "M5.4"),
-    Register(0x1C, "Drifttid kompressor", 2, 1.0, "h", False, "M5.5"),
-    Register(0x1D, "Tidfaktor elpatron", 2, 1.0, "", False, "M9.1.8"),
-    Register(0x1E, "Maxtemperatur framledning", 1, 1.0, "°C", True, "M2.4", 10, 65),
-    Register(0x1F, "Mintemperatur framledning", 1, 1.0, "°C", True, "M2.3", 10, 65),
-    # Register(0x22, "Kompensering yttre", 1, 1.0, "", True, "M2.5", -10, 10), # UNUSED
-    Register(
-        0x24, "Intervall per. extra VV", 1, 1.0, "dygn", True, "M1.3", 0, 90
-    ),  ## UNDERSÖK -> 14
-    Register(0x25, "Starta om FIGHTER360P", 2, 1.0, "", True, ""),
-    # Register(0x25, "Extern larmsignal 1 (RCU DI 1)", 2, 1.0, "", False, ""),
-    # Register(0x25, "Extern larmsignal 2 (RCU DI 2)", 2, 1.0, "", False, ""),
-    Register(0x26, "RCU förskjutning 1 (Reg1)", 1, 1.0, "", True, "M2.7", -10, 10),
-    Register(0x28, "Larmnivå frånluftstemperatur", 1, 1.0, "°C", True, "M5.6", 0, 20),
-    Register(0x29, "Klocka: år", 1, 1.0, "", False, "M7.1"),
-    Register(0x2A, "Klocka: månad", 1, 1.0, "", False, "M7.1"),
-    Register(0x2B, "Klocka: dag", 1, 1.0, "", False, "M7.1"),
-    Register(0x2C, "Klocka: timma", 1, 1.0, "", False, "M7.2"),
-    Register(0x2D, "Klocka: minut", 1, 1.0, "", False, "M7.2"),
-    Register(0x2E, "Klocka: sekund", 1, 1.0, "", False, "M7.2"),
-]
 
 
 

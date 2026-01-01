@@ -554,6 +554,95 @@ class NibeHeatPump:
 
         return self.parameter_values.copy()
 
+    def read_single_parameter(
+        self, param_index: int, timeout: float = 10.0
+    ) -> Optional[float]:
+        """
+        Read a single specific parameter from the pump.
+
+        Args:
+            param_index: The register index to read (e.g., 0x01)
+            timeout: Maximum time to wait for the parameter (seconds)
+
+        Returns:
+            The parameter value if found, None if timeout
+        """
+        print(f"\n{'=' * FULL_LINE}")
+        print(f"📖 Reading Parameter 0x{param_index:02X}")
+        print(f"{'=' * FULL_LINE}")
+
+        if param_index in self.parameters:
+            param = self.parameters[param_index]
+            print(f"Parameter: {param.name}")
+            print(f"Waiting up to {timeout} seconds...\n")
+        else:
+            print(f"Warning: Register 0x{param_index:02X} not defined in YAML\n")
+
+        start_time = time.time()
+
+        while time.time() - start_time < timeout:
+            # Wait for pump to address RCU
+            if not self._wait_for_addressing(timeout=5.0):
+                continue
+
+            # Send ACK (we're ready to receive data)
+            logger.info("📤 Sending ACK (ready to receive)...")
+            self._send_with_space_parity(bytes([self.pump.ack]))
+            time.sleep(0.05)
+
+            # Receive data packet
+            response = self._read_response(timeout=2.0)
+
+            if response and param_index in response["parameters"]:
+                raw_value = response["parameters"][param_index]
+
+                if param_index in self.parameters:
+                    param = self.parameters[param_index]
+
+                    # Check if this is a bitmask register
+                    if param.bit_fields:
+                        # Store all bit fields
+                        for bit_field in param.bit_fields:
+                            masked_value = raw_value & bit_field.mask
+                            shift = (bit_field.mask & -bit_field.mask).bit_length() - 1
+                            actual_value = masked_value >> shift
+                            key = f"0x{param_index:02X}:{bit_field.name}"
+                            self.bit_field_values[key] = actual_value
+
+                        logger.info(
+                            f"✅ Found parameter 0x{param_index:02X} with {len(param.bit_fields)} bit fields"
+                        )
+                        return None  # Bit fields stored separately
+                    else:
+                        # Regular parameter
+                        actual_value = raw_value / param.factor
+                        self.parameter_values[param_index] = actual_value
+                        logger.info(
+                            f"✅ Found parameter 0x{param_index:02X}: {actual_value} {param.unit}"
+                        )
+
+                        # Send ACK to confirm receipt
+                        self._send_with_space_parity(bytes([self.pump.ack]))
+                        time.sleep(0.05)
+
+                        return actual_value
+                else:
+                    # Unknown parameter, just store raw value
+                    logger.info(
+                        f"✅ Found parameter 0x{param_index:02X}: {raw_value} (raw)"
+                    )
+                    return float(raw_value)
+
+            # Send ACK anyway to keep communication going
+            if response:
+                self._send_with_space_parity(bytes([self.pump.ack]))
+                time.sleep(0.05)
+
+        logger.warning(
+            f"⏱️ Timeout: Parameter 0x{param_index:02X} not received within {timeout}s"
+        )
+        return None
+
     def get_value(self, param_index: int) -> Optional[float]:
         """Get cached parameter value"""
         return self.parameter_values.get(param_index)
@@ -572,9 +661,7 @@ class NibeHeatPump:
         return self.bit_field_values.copy()
 
 
-def load_from_yaml(
-    file_path: str, pump_name: str = "nibe_360P"
-) -> Tuple[List[Register], Pump]:
+def load_from_yaml(file_path: str, pump_name: str) -> Tuple[List[Register], Pump]:
     """Load register definitions from a YAML file
 
     Args:
@@ -766,7 +853,8 @@ def load_from_yaml(
 def main():
     """Main program"""
 
-    NIBE_360P_PARAMETERS, PUMP = load_from_yaml("pumps.yaml")
+    pump_model = "nibe_360P"
+    NIBE_PARAMETERS, PUMP = load_from_yaml("pumps.yaml", pump_model)
 
     if sys.platform.startswith("win"):
         SERIAL_PORT = "COM3"
@@ -786,10 +874,11 @@ def main():
     print("")
     print("Options:")
     print("  1) Read parameters (normal operation)")
+    print("  2) Read single parameter")
     print("  9) Capture bus traffic (diagnostic mode)")
     print("")
 
-    choice = input("Choose option [1/9] (default: 1): ").strip() or "1"
+    choice = input("Choose option [1/2/9] (default: 1): ").strip() or "1"
     print("")
 
     logger.info("")
@@ -798,7 +887,7 @@ def main():
         f"Baudrate: {PUMP.baudrate} baud, {PUMP.bit_mode}-bit mode ({PUMP.parity} parity)"
     )
     logger.info("")
-    pump = NibeHeatPump(SERIAL_PORT, parameters=NIBE_360P_PARAMETERS, pump_info=PUMP)
+    pump = NibeHeatPump(SERIAL_PORT, parameters=NIBE_PARAMETERS, pump_info=PUMP)
 
     ## Failing pump connection
     if not pump.connect():
@@ -899,6 +988,79 @@ def main():
             else:
                 print("\n❌ No parameters received!")
                 print("Try option 1 to diagnose the issue.")
+
+        # Single parameter read
+        if choice == "2":
+            print("\n" + "=" * FULL_LINE)
+            print("  SINGLE PARAMETER READ")
+            print("=" * FULL_LINE)
+            print("\nAvailable registers:")
+
+            # Show available registers
+            for idx in sorted(pump.parameters.keys()):
+                param = pump.parameters[idx]
+                print(f"  0x{idx:02X} ({idx:3d}) - {param.name}")
+
+            print("")
+            param_input = input(
+                "Enter register ID (hex like 0x01 or decimal like 1): "
+            ).strip()
+
+            # Parse input as hex or decimal
+            try:
+                if param_input.startswith("0x") or param_input.startswith("0X"):
+                    param_idx = int(param_input, 16)
+                else:
+                    param_idx = int(param_input)
+            except ValueError:
+                print(f"\n❌ Invalid input: {param_input}")
+                return
+
+            print("")
+            time.sleep(1)
+
+            value = pump.read_single_parameter(param_idx, timeout=10.0)
+
+            if value is not None:
+                param = pump.parameters.get(param_idx)
+                if param:
+                    print("\n" + "=" * 35)
+                    print("  SUCCESS!")
+                    print("=" * 35)
+                    print(
+                        f"\n  [0x{param_idx:02X}] {param.name}: {value:.1f} {param.unit}"
+                    )
+                    print()
+                else:
+                    print(f"\n✅ Value: {value}")
+            elif param_idx in pump.parameters and pump.parameters[param_idx].bit_fields:
+                # This is a bit field register
+                param = pump.parameters[param_idx]
+                bit_fields = pump.get_all_bit_fields()
+
+                print("\n" + "=" * 35)
+                print("  SUCCESS!")
+                print("=" * 35)
+                print(f"\n  [0x{param_idx:02X}] {param.name}")
+
+                sorted_bit_fields = sorted(
+                    param.bit_fields, key=lambda bf: bf.sort_order
+                )
+                for i, bit_field in enumerate(sorted_bit_fields, 1):
+                    key = f"0x{param_idx:02X}:{bit_field.name}"
+                    if key in bit_fields:
+                        raw_value = bit_fields[key]
+                        if bit_field.value_map and raw_value in bit_field.value_map:
+                            display_value = bit_field.value_map[raw_value]
+                        else:
+                            display_value = str(raw_value)
+                        print(
+                            f"      [{param_idx:02X}.{i}] {bit_field.name:.<29} {display_value:>8} {bit_field.unit:<5} {bit_field.menu_structure}"
+                        )
+                print()
+            else:
+                print(f"\n❌ Parameter 0x{param_idx:02X} not received")
+                print("Try option 9 to diagnose bus traffic.")
 
     except KeyboardInterrupt:
         print("\n\n⚠️ Interrupted by user")

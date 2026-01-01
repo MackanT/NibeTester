@@ -136,6 +136,7 @@ pumps:
               0: "Från"
               1: "Till"
             writable: false
+            menu_structure: "M9.1.4"
           - name: "Cirkulationspump 2"
             mask: 0x01
             sort_order: 3
@@ -179,6 +180,7 @@ pumps:
               0: "Från"
               1: "Till"
             writable: true
+            menu_structure: "M9.1.1.1"
           - name: "Fläkthastighet"
             mask: 0x1800
             sort_order: 4
@@ -225,6 +227,7 @@ pumps:
               0: "Från"
               1: "Till"
             writable: true
+            menu_structure: "M8.2.1"
           - name: "Extra varmvatten"
             mask: 0x7000
             sort_order: 2
