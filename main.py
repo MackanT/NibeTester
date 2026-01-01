@@ -852,6 +852,9 @@ class NibeHeatPump:
             # Send data packet
             packet_bytes = bytes(packet)
             logger.info(f"📤 Sending write packet: {packet_bytes.hex(' ').upper()}")
+            logger.info(
+                f"   Param: 0x{param_index:02X}, Raw value: {raw_value} (0x{raw_value:04X}), Bytes: {' '.join(f'{b:02X}' for b in value_bytes)}"
+            )
             self._send_with_space_parity(packet_bytes)
             time.sleep(0.1)
 
@@ -864,9 +867,17 @@ class NibeHeatPump:
                     if byte[0] == self.pump.ack:
                         logger.info("✅ Pump acknowledged write (ACK)")
 
-                        # Send ETX to complete transaction
-                        logger.info("📤 Sending ETX (complete)...")
-                        self._send_with_space_parity(bytes([self.pump.etx]))
+                        # Send *ETX (with 9th bit set = MARK parity) to complete transaction
+                        logger.info("📤 Sending *ETX (complete)...")
+                        # ETX must be sent with MARK parity (9th bit = 1)
+                        self.serial.parity = serial.PARITY_MARK
+                        self.serial.write(bytes([self.pump.etx]))
+                        self.serial.flush()
+                        # Switch back to MARK for receiving
+                        self.serial.parity = serial.PARITY_MARK
+                        logger.debug(
+                            f"Sent *ETX: {self.pump.etx:02X} (with 9th bit set)"
+                        )
 
                         print(f"\n{'=' * FULL_LINE}")
                         print("  ✅ WRITE SUCCESSFUL!")
