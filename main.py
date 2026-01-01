@@ -22,7 +22,7 @@ TIMEOUT = 60
 
 # Setup logging
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -850,9 +850,19 @@ class NibeHeatPump:
                 data_length,
             ] + data_payload
 
-            # Calculate checksum
+            # Calculate checksum on ALL bytes built so far
             checksum = NibeProtocol.calc_checksum(packet)
             packet.append(checksum)
+
+            # Verify packet structure before sending
+            logger.debug(f"Packet breakdown:")
+            logger.debug(f"  CMD: 0x{packet[0]:02X}")
+            logger.debug(f"  Fixed: 0x{packet[1]:02X}")
+            logger.debug(f"  Sender: 0x{packet[2]:02X}")
+            logger.debug(f"  Length: 0x{packet[3]:02X} ({packet[3]} bytes)")
+            logger.debug(f"  Payload: {' '.join(f'{b:02X}' for b in packet[4:-1])}")
+            logger.debug(f"  Checksum: 0x{packet[-1]:02X}")
+            logger.debug(f"  Total packet size: {len(packet)} bytes")
 
             # Send data packet with SPACE parity (9th bit = 0)
             packet_bytes = bytes(packet)
@@ -870,7 +880,9 @@ class NibeHeatPump:
             # IMMEDIATELY switch back to MARK for receiving (pump's ACK has 9th bit = 0)
             self.serial.parity = serial.PARITY_MARK
             logger.debug(f"Sent write packet with SPACE, switched back to MARK")
-            time.sleep(0.05)  # Short delay for pump to process
+
+            # Give pump time to process and respond
+            time.sleep(0.1)
 
             # Wait for ACK or NAK
             logger.info("⏳ Waiting for pump response (ACK/NAK)...")
