@@ -819,32 +819,16 @@ class NibeHeatPump:
 
             data_type = param.data_type
 
-            # Convert based on data_type (NOT size - size is for read parsing, data_type is for write encoding)
-            if data_type == "u8":
-                # Unsigned 8-bit (0-255)
+            # Convert based on size (use register size, not data_type for byte count)
+            # This matches the read format where size=1 means 1 byte transmitted
+            if param.size == 1:
+                # Single byte - just send low byte
                 value_bytes = [raw_value & 0xFF]
-            elif data_type == "s8":
-                # Signed 8-bit (-128 to 127)
-                if raw_value < 0:
-                    raw_value = raw_value + 256
-                value_bytes = [raw_value & 0xFF]
-            elif data_type == "u16":
-                # Unsigned 16-bit (0-65535) - always 2 bytes
-                value_high = (raw_value >> 8) & 0xFF
-                value_low = raw_value & 0xFF
-                value_bytes = [value_high, value_low]
-            elif data_type == "s16":
-                # Signed 16-bit (-32768 to 32767) - always 2 bytes
-                if raw_value < 0:
-                    raw_value = raw_value + 65536
-                value_high = (raw_value >> 8) & 0xFF
-                value_low = raw_value & 0xFF
-                value_bytes = [value_high, value_low]
             else:
-                logger.error(
-                    f"❌ Unknown data_type '{data_type}' for parameter 0x{param_index:02X}"
-                )
-                return False
+                # Two bytes (HIGH byte first, LOW byte second)
+                value_high = (raw_value >> 8) & 0xFF
+                value_low = raw_value & 0xFF
+                value_bytes = [value_high, value_low]
 
             # Data payload: 00 <param_index> <value_bytes> (same format as reads)
             data_payload = [0x00, param_index] + value_bytes
