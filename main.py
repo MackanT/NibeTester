@@ -258,7 +258,8 @@ class NibeHeatPump:
                 bytesize=serial.EIGHTBITS,
                 parity=parity,
                 stopbits=serial.STOPBITS_ONE,
-                timeout=2.0,  # 2 second timeout for reads
+                timeout=0.5,  # Short timeout to prevent blocking
+                inter_byte_timeout=0.1,  # Prevent read() from blocking indefinitely
             )
             logger.info(
                 f"✅ Connected to {self.port} at {baud} baud (parity={parity_cfg})"
