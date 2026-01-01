@@ -1320,7 +1320,7 @@ def main():
             # Get current value first
             print("\n📖 Reading current value...")
             time.sleep(1)
-            current_value = pump.read_single_parameter(param_idx, timeout=10.0)
+            current_value = pump.read_single_parameter(param_idx, timeout=30.0)
 
             if current_value is not None:
                 param = writable_params[param_idx]
