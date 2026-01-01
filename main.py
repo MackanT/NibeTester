@@ -656,18 +656,53 @@ class NibeHeatPump:
                         self._send_with_space_parity(bytes([self.pump.ack]))
                         time.sleep(0.05)
 
+                        # Wait for ETX to complete protocol cycle
+                        etx_start = time.time()
+                        while time.time() - etx_start < 1.0:
+                            if self.serial.in_waiting > 0:
+                                byte = self.serial.read(1)
+                                if byte[0] == self.pump.etx:
+                                    logger.debug("✅ Received ETX")
+                                    break
+                            time.sleep(0.01)
+
                         return actual_value
                 else:
                     # Unknown parameter, just store raw value
                     logger.info(
                         f"✅ Found parameter 0x{param_index:02X}: {raw_value} (raw)"
                     )
+
+                    # Send ACK to confirm receipt
+                    self._send_with_space_parity(bytes([self.pump.ack]))
+                    time.sleep(0.05)
+
+                    # Wait for ETX
+                    etx_start = time.time()
+                    while time.time() - etx_start < 1.0:
+                        if self.serial.in_waiting > 0:
+                            byte = self.serial.read(1)
+                            if byte[0] == self.pump.etx:
+                                logger.debug("✅ Received ETX")
+                                break
+                        time.sleep(0.01)
+
                     return float(raw_value)
 
             # Send ACK anyway to keep communication going
             if response:
                 self._send_with_space_parity(bytes([self.pump.ack]))
                 time.sleep(0.05)
+
+                # Wait for ETX before next cycle
+                etx_start = time.time()
+                while time.time() - etx_start < 1.0:
+                    if self.serial.in_waiting > 0:
+                        byte = self.serial.read(1)
+                        if byte[0] == self.pump.etx:
+                            logger.debug("✅ Received ETX")
+                            break
+                    time.sleep(0.01)
 
         logger.warning(
             f"⏱️ Timeout: Parameter 0x{param_index:02X} not received within {timeout}s"
