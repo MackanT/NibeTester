@@ -877,14 +877,15 @@ class NibeHeatPump:
             self.serial.parity = serial.PARITY_SPACE
             self.serial.write(packet_bytes)
             self.serial.flush()
-            # IMMEDIATELY switch back to MARK for receiving (pump's ACK has 9th bit = 0)
-            self.serial.parity = serial.PARITY_MARK
-            logger.debug(f"Sent write packet with SPACE, switched back to MARK")
+            # Keep SPACE parity to receive pump's ACK/NAK response (data bytes, not control bytes)
+            logger.debug(
+                f"Sent write packet with SPACE parity, keeping SPACE to receive response"
+            )
 
             # Give pump time to process and respond
-            time.sleep(0.1)
+            time.sleep(0.15)
 
-            # Wait for ACK or NAK
+            # Wait for ACK or NAK (data bytes, so use SPACE parity to receive)
             logger.info("⏳ Waiting for pump response (ACK/NAK)...")
             response_start = time.time()
             response_bytes = []  # Track all bytes received
@@ -932,6 +933,8 @@ class NibeHeatPump:
                         break  # Try again
                 time.sleep(0.01)
             else:
+                # Switch back to MARK parity before retrying (to detect addressing)
+                self.serial.parity = serial.PARITY_MARK
                 if response_bytes:
                     logger.warning(
                         f"❌ Timeout waiting for pump response. Received bytes: {' '.join(f'{b:02X}' for b in response_bytes)}"
@@ -942,6 +945,8 @@ class NibeHeatPump:
                     )
                 continue
 
+        # Switch back to MARK parity before returning failure
+        self.serial.parity = serial.PARITY_MARK
         logger.error(f"❌ Write failed after {timeout}s timeout")
         return False
 
