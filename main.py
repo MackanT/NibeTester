@@ -835,7 +835,7 @@ class NibeHeatPump:
         # size=1 means send 1 byte, size=2 means send 2 bytes (matches READ format)
         if param.size == 1:
             # Single byte parameter
-            value_bytes = [0x00, raw_value & 0xFF]
+            value_bytes = [raw_value & 0xFF]
         else:
             # Two byte parameter (HIGH byte first, LOW byte second)
             value_high = (raw_value >> 8) & 0xFF
