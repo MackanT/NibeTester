@@ -864,16 +864,24 @@ class NibeHeatPump:
             logger.info(
                 f"   Checksum: 0x{checksum:02X}, Data length field: 0x{data_length:02X}"
             )
-            self._send_with_space_parity(packet_bytes)
-            time.sleep(0.2)  # Increased delay for pump to process
+            # Send packet with SPACE parity (9th bit = 0)
+            self.serial.parity = serial.PARITY_SPACE
+            self.serial.write(packet_bytes)
+            self.serial.flush()
+            # IMMEDIATELY switch back to MARK for receiving (pump's ACK has 9th bit = 0)
+            self.serial.parity = serial.PARITY_MARK
+            logger.debug(f"Sent write packet with SPACE, switched back to MARK")
+            time.sleep(0.05)  # Short delay for pump to process
 
             # Wait for ACK or NAK
-            logger.debug("⏳ Waiting for pump response (ACK/NAK)...")
+            logger.info("⏳ Waiting for pump response (ACK/NAK)...")
             response_start = time.time()
-            while time.time() - response_start < 2.0:
+            response_bytes = []  # Track all bytes received
+            while time.time() - response_start < 3.0:  # Increased timeout
                 if self.serial.in_waiting > 0:
                     byte = self.serial.read(1)
-                    logger.debug(
+                    response_bytes.append(byte[0])
+                    logger.info(
                         f"   Received byte: 0x{byte[0]:02X} (ACK=0x{self.pump.ack:02X}, NAK=0x{self.pump.nak:02X})"
                     )
                     if byte[0] == self.pump.ack:
@@ -913,7 +921,14 @@ class NibeHeatPump:
                         break  # Try again
                 time.sleep(0.01)
             else:
-                logger.warning("❌ Timeout waiting for pump response, retrying...")
+                if response_bytes:
+                    logger.warning(
+                        f"❌ Timeout waiting for pump response. Received bytes: {' '.join(f'{b:02X}' for b in response_bytes)}"
+                    )
+                else:
+                    logger.warning(
+                        "❌ Timeout waiting for pump response (no bytes received)"
+                    )
                 continue
 
         logger.error(f"❌ Write failed after {timeout}s timeout")
