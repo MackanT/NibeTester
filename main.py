@@ -836,15 +836,16 @@ class NibeHeatPump:
 
             data_type = param.data_type
 
-            # IMPORTANT: On the wire, ALL parameters are transmitted as 2 bytes
-            # Even 1-byte parameters like 0x1E (Maxtemperatur) are sent as 2 bytes
-            # with high byte = 0x00. The 'size' field only affects value interpretation.
-            # This matches the read format where all values are 2 bytes on the wire.
-
-            # Always send 2 bytes (HIGH byte first, LOW byte second)
-            value_high = (raw_value >> 8) & 0xFF
-            value_low = raw_value & 0xFF
-            value_bytes = [value_high, value_low]
+            # Use the parameter's size field to determine byte count on the wire
+            # size=1 means send 1 byte, size=2 means send 2 bytes (matches READ format)
+            if param.size == 1:
+                # Single byte parameter
+                value_bytes = [raw_value & 0xFF]
+            else:
+                # Two byte parameter (HIGH byte first, LOW byte second)
+                value_high = (raw_value >> 8) & 0xFF
+                value_low = raw_value & 0xFF
+                value_bytes = [value_high, value_low]
 
             # Data payload: 00 <param_index> <value_bytes> (same format as reads)
             data_payload = [0x00, param_index] + value_bytes
