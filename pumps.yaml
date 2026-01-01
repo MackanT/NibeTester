@@ -124,15 +124,22 @@ pumps:
         bit_fields:
           - name: "Kompressor"
             mask: 0x02
-            bit_index: 1
-
+            sort_order: 1
+            value_map:
+              0: "Från"
+              1: "Till"
           - name: "Cirkulationspump 1"
             mask: 0x40
-            bit_index: 6
-
+            sort_order: 2
+            value_map:
+              0: "Från"
+              1: "Till"
           - name: "Cirkulationspump 2"
             mask: 0x01
-            bit_index: 0
+            sort_order: 3
+            value_map:
+              0: "Från"
+              1: "Till"
       - id: 0x14
         name: "Tillsatsvärme"
         size: 2

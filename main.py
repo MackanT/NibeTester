@@ -29,11 +29,14 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class BitField:
-    """Bit field definition for registers with multiple boolean flags"""
+    """Bit field definition for registers with multiple boolean or multi-bit flags"""
 
     name: str  # Name of the bit field (e.g., "Kompressor")
-    mask: int  # Bitmask to extract the bit (e.g., 0x02, 0x40)
-    bit_index: Optional[int] = None  # Optional bit position for clarity (0-7 or 0-15)
+    mask: int  # Bitmask to extract the bits (e.g., 0x02, 0x07, 0x40)
+    sort_order: int  # Display order (used for sorting)
+    value_map: Optional[Dict[int, str]] = (
+        None  # Optional mapping of integer values to text (e.g., {0: "OFF", 1: "ON"})
+    )
 
 
 @dataclass
@@ -224,8 +227,8 @@ class NibeHeatPump:
         self.parameters: Dict[int, Register] = {}
         self.parameter_values: Dict[int, float] = {}  # Regular parameter values
         self.bit_field_values: Dict[
-            str, bool
-        ] = {}  # Bit field values (key: "0x13:Kompressor")
+            str, int
+        ] = {}  # Bit field values (key: "0x13:Kompressor", value: integer 0-7 or boolean 0/1)
         self.pump: Pump = pump_info
 
         if parameters:
@@ -478,11 +481,28 @@ class NibeHeatPump:
                         if param.bit_fields:
                             # Extract individual bit fields
                             for bit_field in param.bit_fields:
-                                bit_value = bool(raw_value & bit_field.mask)
+                                # Extract the masked value
+                                masked_value = raw_value & bit_field.mask
+                                # Shift right to get actual value (count trailing zeros in mask)
+                                shift = (
+                                    bit_field.mask & -bit_field.mask
+                                ).bit_length() - 1
+                                actual_value = masked_value >> shift
+
                                 key = f"0x{param_idx:02X}:{bit_field.name}"
-                                self.bit_field_values[key] = bit_value
+                                self.bit_field_values[key] = actual_value
+
+                                # Format display value
+                                if (
+                                    bit_field.value_map
+                                    and actual_value in bit_field.value_map
+                                ):
+                                    display_value = bit_field.value_map[actual_value]
+                                else:
+                                    display_value = str(actual_value)
+
                                 logger.debug(
-                                    f"   [{param_idx:02X}] {bit_field.name}: {'ON' if bit_value else 'OFF'} (mask=0x{bit_field.mask:02X})"
+                                    f"   [{param_idx:02X}] {bit_field.name}: {display_value} (mask=0x{bit_field.mask:02X}, value={actual_value})"
                                 )
                         else:
                             # Regular parameter with factor
@@ -527,12 +547,12 @@ class NibeHeatPump:
         """Get all cached parameter values"""
         return self.parameter_values.copy()
 
-    def get_bit_field(self, param_index: int, bit_field_name: str) -> Optional[bool]:
+    def get_bit_field(self, param_index: int, bit_field_name: str) -> Optional[int]:
         """Get cached bit field value"""
         key = f"0x{param_index:02X}:{bit_field_name}"
         return self.bit_field_values.get(key)
 
-    def get_all_bit_fields(self) -> Dict[str, bool]:
+    def get_all_bit_fields(self) -> Dict[str, int]:
         """Get all cached bit field values"""
         return self.bit_field_values.copy()
 
@@ -671,20 +691,31 @@ def load_from_yaml(
         if "bit_fields" in item:
             bit_fields = []
             for bf in item["bit_fields"]:
-                if "name" not in bf or "mask" not in bf:
+                if "name" not in bf or "mask" not in bf or "sort_order" not in bf:
                     raise ValueError(
-                        f"Bit field in register '{item['name']}' must have 'name' and 'mask'"
+                        f"Bit field in register '{item['name']}' must have 'name', 'mask', and 'sort_order'"
                     )
                 mask_val = _parse_byte_val(bf["mask"], None)
                 if mask_val is None:
                     raise ValueError(
                         f"Invalid mask value '{bf['mask']}' in bit field '{bf['name']}'"
                     )
+
+                # Parse value_map if present
+                value_map = None
+                if "value_map" in bf:
+                    value_map = {}
+                    for key, val in bf["value_map"].items():
+                        # Keys in YAML are strings, convert to int
+                        int_key = int(key) if isinstance(key, str) else key
+                        value_map[int_key] = val
+
                 bit_fields.append(
                     BitField(
                         name=bf["name"],
                         mask=mask_val,
-                        bit_index=bf.get("bit_index"),
+                        sort_order=bf["sort_order"],
+                        value_map=value_map,
                     )
                 )
 
@@ -813,12 +844,24 @@ def main():
                         if param.bit_fields:
                             # This is a bit field register - show header then bit fields
                             print(f"  [{idx:02X}] {param.name}")
-                            for i, bit_field in enumerate(param.bit_fields, 1):
+                            # Sort bit fields by sort_order
+                            sorted_bit_fields = sorted(
+                                param.bit_fields, key=lambda bf: bf.sort_order
+                            )
+                            for i, bit_field in enumerate(sorted_bit_fields, 1):
                                 key = f"0x{idx:02X}:{bit_field.name}"
                                 if key in bit_fields:
-                                    status = "ON " if bit_fields[key] else "OFF"
+                                    raw_value = bit_fields[key]
+                                    # Format display value using value_map if available
+                                    if (
+                                        bit_field.value_map
+                                        and raw_value in bit_field.value_map
+                                    ):
+                                        display_value = bit_field.value_map[raw_value]
+                                    else:
+                                        display_value = str(raw_value)
                                     print(
-                                        f"      [{idx:02X}.{i}] {bit_field.name:.<30} {status}"
+                                        f"      [{idx:02X}.{i}] {bit_field.name:.<30} {display_value}"
                                     )
                         else:
                             # Regular parameter
@@ -858,12 +901,22 @@ def main():
                     if param.bit_fields:
                         # Bit field register
                         print(f"  [{idx:02X}] {param.name}")
-                        for i, bit_field in enumerate(param.bit_fields, 1):
+                        sorted_bit_fields = sorted(
+                            param.bit_fields, key=lambda bf: bf.sort_order
+                        )
+                        for i, bit_field in enumerate(sorted_bit_fields, 1):
                             key = f"0x{idx:02X}:{bit_field.name}"
                             if key in bit_fields:
-                                status = "ON" if bit_fields[key] else "OFF"
+                                raw_value = bit_fields[key]
+                                if (
+                                    bit_field.value_map
+                                    and raw_value in bit_field.value_map
+                                ):
+                                    display_value = bit_field.value_map[raw_value]
+                                else:
+                                    display_value = str(raw_value)
                                 print(
-                                    f"      [{idx:02X}.{i}] {bit_field.name}: {status}"
+                                    f"      [{idx:02X}.{i}] {bit_field.name}: {display_value}"
                                 )
                     else:
                         # Regular parameter

@@ -32,7 +32,7 @@ pumps:
         unit: "°C"
         writable: false
       
-      # Bitmask register (multiple boolean flags)
+      # Bitmask register (multiple flags with custom mappings)
       - index: 0x13
         name: "Status Flags"
         size: 1
@@ -42,34 +42,90 @@ pumps:
         bit_fields:
           - name: "Kompressor"
             mask: 0x02        # Bit 1
-            bit_index: 1      # Optional - for documentation
+            sort_order: 1     # Display order
+            value_map:
+              0: "OFF"
+              1: "ON"
           
           - name: "Cirkulationspump 1"
             mask: 0x40        # Bit 6
-            bit_index: 6
+            sort_order: 2
+            value_map:
+              0: "OFF"
+              1: "ON"
           
           - name: "Cirkulationspump 2"
             mask: 0x01        # Bit 0
-            bit_index: 0
+            sort_order: 3
+            value_map:
+              0: "OFF"
+              1: "ON"
+      
+      # Multi-bit field example (3 bits = values 0-7)
+      - index: 0x14
+        name: "Operating Mode"
+        size: 1
+        factor: 1.0
+        unit: ""
+        writable: false
+        bit_fields:
+          - name: "Heat Mode"
+            mask: 0x07        # Bits 0-2 (3 bits = 0-7)
+            sort_order: 1
+            value_map:
+              0: "Off"
+              1: "Auto"
+              2: "Manual"
+              3: "Economy"
+              4: "Boost"
+              5: "Away"
+              6: "Reserved"
+              7: "Error"
+          
+          - name: "Fan Speed"
+            mask: 0x38        # Bits 3-5 (3 bits = 0-7)
+            sort_order: 2
+            value_map:
+              0: "Off"
+              1: "Low"
+              2: "Medium"
+              3: "High"
+              4: "Auto"
 ```
 
 ## Required Fields for Bit Fields
 
 Each bit field entry must have:
 - `name`: Descriptive name for the flag
-- `mask`: Hex value of the bitmask (e.g., `0x02`, `0x40`)
+- `mask`: Hex value of the bitmask (e.g., `0x02`, `0x07`, `0x38`)
+- `sort_order`: Integer determining display order (1, 2, 3, etc.)
 
 Optional fields:
-- `bit_index`: Bit position (0-7 for byte, 0-15 for word) - used for documentation only
+- `value_map`: Dictionary mapping integer values to text descriptions (e.g., `{0: "OFF", 1: "ON"}`)
+  - If not provided, the raw integer value will be displayed
 
 ## How It Works
 
-### Raw Value Processing
+### Single-Bit Boolean Values
 When register `0x13` returns value `0x43` (binary: `01000011`):
 
-1. **Cirkulationspump 2** (mask `0x01`): `0x43 & 0x01 = 0x01` → **ON**
-2. **Kompressor** (mask `0x02`): `0x43 & 0x02 = 0x02` → **ON**
-3. **Cirkulationspump 1** (mask `0x40`): `0x43 & 0x40 = 0x40` → **ON**
+1. **Cirkulationspump 2** (mask `0x01`, sort_order 3): `0x43 & 0x01 = 0x01` → shift 0 → value `1` → **"ON"**
+2. **Kompressor** (mask `0x02`, sort_order 1): `0x43 & 0x02 = 0x02` → shift 1 → value `1` → **"ON"**
+3. **Cirkulationspump 1** (mask `0x40`, sort_order 2): `0x43 & 0x40 = 0x40` → shift 6 → value `1` → **"ON"**
+
+Display is sorted by `sort_order` (1, 2, 3), not by mask value.
+
+### Multi-Bit Integer Values
+When register `0x14` returns value `0x1A` (binary: `00011010`):
+
+1. **Heat Mode** (mask `0x07` = bits 0-2): `0x1A & 0x07 = 0x02` → shift 0 → value `2` → **"Manual"**
+2. **Fan Speed** (mask `0x38` = bits 3-5): `0x1A & 0x38 = 0x18` → shift 3 → value `3` → **"High"**
+
+The code automatically:
+- Applies the mask
+- Shifts right by counting trailing zeros in mask
+- Looks up the value in `value_map`
+- Falls back to displaying the raw integer if no mapping exists
 
 ### Code Usage
 
@@ -98,12 +154,16 @@ SUCCESS! Captured 5 parameters:
 
 [01] Utetemperatur...................    12.5 °C   
 [02] Inomhustemperatur...............    21.3 °C   
-
-Bit Fields:
-0x13:Cirkulationspump 1..................... ON
-0x13:Cirkulationspump 2..................... OFF
-0x13:Kompressor............................. ON
+[13] Status Flags
+    [13.1] Kompressor.................... ON
+    [13.2] Cirkulationspump 1............ ON
+    [13.3] Cirkulationspump 2............ OFF
+[14] Operating Mode
+    [14.1] Heat Mode..................... Manual
+    [14.2] Fan Speed..................... High
 ```
+
+Note: Bit fields are sorted by `sort_order`, not by their position in the YAML or mask value.
 
 ## Bitmask Reference
 
