@@ -798,20 +798,34 @@ def main():
                 print("=" * 35)
                 print()
 
-                # Display regular parameters
-                for idx in sorted(values.keys()):
-                    param = pump.parameters[idx]
-                    print(
-                        f"  [{idx:02X}] {param.name:.<35} {values[idx]:>8.1f} {param.unit:<5} {param.menu_structure}"
-                    )
+                # Collect all unique register indices (both regular and bit field)
+                all_indices = set(values.keys())
+                for key in bit_fields.keys():
+                    idx_str = key.split(":")[0]  # Extract "0x13" from "0x13:Kompressor"
+                    idx = int(idx_str, 16)
+                    all_indices.add(idx)
 
-                # Display bit fields
-                if bit_fields:
-                    print()
-                    print("  Bit Fields:")
-                    for key in sorted(bit_fields.keys()):
-                        status = "ON " if bit_fields[key] else "OFF"
-                        print(f"  {key:.<45} {status}")
+                # Display in sorted order
+                for idx in sorted(all_indices):
+                    if idx in pump.parameters:
+                        param = pump.parameters[idx]
+
+                        if param.bit_fields:
+                            # This is a bit field register - show header then bit fields
+                            print(f"  [{idx:02X}] {param.name}")
+                            for i, bit_field in enumerate(param.bit_fields, 1):
+                                key = f"0x{idx:02X}:{bit_field.name}"
+                                if key in bit_fields:
+                                    status = "ON " if bit_fields[key] else "OFF"
+                                    print(
+                                        f"      [{idx:02X}.{i}] {bit_field.name:.<30} {status}"
+                                    )
+                        else:
+                            # Regular parameter
+                            if idx in values:
+                                print(
+                                    f"  [{idx:02X}] {param.name:.<35} {values[idx]:>8.1f} {param.unit:<5} {param.menu_structure}"
+                                )
 
                 print()
             else:
@@ -828,16 +842,35 @@ def main():
         if values or bit_fields:
             print("\n📊 Partial Results:")
             print("=" * 70)
-            for idx in sorted(values.keys()):
+
+            # Collect all unique register indices
+            all_indices = set(values.keys())
+            for key in bit_fields.keys():
+                idx_str = key.split(":")[0]
+                idx = int(idx_str, 16)
+                all_indices.add(idx)
+
+            # Display in sorted order
+            for idx in sorted(all_indices):
                 if idx in pump.parameters:
                     param = pump.parameters[idx]
-                    print(f"  [{idx:02X}] {param.name}: {values[idx]} {param.unit}")
 
-            if bit_fields:
-                print("\n  Bit Fields:")
-                for key in sorted(bit_fields.keys()):
-                    status = "ON" if bit_fields[key] else "OFF"
-                    print(f"  {key}: {status}")
+                    if param.bit_fields:
+                        # Bit field register
+                        print(f"  [{idx:02X}] {param.name}")
+                        for i, bit_field in enumerate(param.bit_fields, 1):
+                            key = f"0x{idx:02X}:{bit_field.name}"
+                            if key in bit_fields:
+                                status = "ON" if bit_fields[key] else "OFF"
+                                print(
+                                    f"      [{idx:02X}.{i}] {bit_field.name}: {status}"
+                                )
+                    else:
+                        # Regular parameter
+                        if idx in values:
+                            print(
+                                f"  [{idx:02X}] {param.name}: {values[idx]} {param.unit}"
+                            )
     finally:
         pump.disconnect()
         print("\n✅ Disconnected\n")
