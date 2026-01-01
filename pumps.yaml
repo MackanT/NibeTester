@@ -94,7 +94,7 @@ pumps:
         factor: 1.0
         unit: ""
         writable: true
-        data_type: "s16"
+        data_type: "s8"  # Fixed: 1-byte register should use s8, not s16
         menu_structure: "M2.1"
         min_value: -1
         max_value: 15

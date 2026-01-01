@@ -783,8 +783,11 @@ class NibeHeatPump:
             # Send ENQ (0x05) to signal write intent
             logger.info("📤 Sending ENQ (write request)...")
             self._send_with_space_parity(bytes([self.pump.enq]))
-            time.sleep(0.05)
-
+            
+            # Clear buffer before waiting for ACK
+            time.sleep(0.1)  # Give pump time to respond
+            self.serial.reset_input_buffer()  # Clear any old data
+            
             # Wait for ACK from pump
             logger.debug("⏳ Waiting for pump ACK...")
             ack_start = time.time()
@@ -792,10 +795,13 @@ class NibeHeatPump:
             while time.time() - ack_start < 2.0:
                 if self.serial.in_waiting > 0:
                     byte = self.serial.read(1)
+                    logger.debug(f"   Received byte: 0x{byte[0]:02X} (expected ACK=0x{self.pump.ack:02X})")
                     if byte[0] == self.pump.ack:
                         logger.info("✅ Pump acknowledged write request")
                         pump_acked = True
                         break
+                    else:
+                        logger.warning(f"   Unexpected byte: 0x{byte[0]:02X}")
                 time.sleep(0.01)
 
             if not pump_acked:
@@ -832,7 +838,8 @@ class NibeHeatPump:
 
             # Data payload: 00 <param_index> <value_bytes> (same format as reads)
             data_payload = [0x00, param_index] + value_bytes
-            data_length = len(data_payload) + 1  # +1 for checksum
+            # Length is data payload only - checksum NOT included per protocol spec
+            data_length = len(data_payload)
 
             # Build full packet: C0 00 14 <len> <payload>
             packet = [
@@ -852,8 +859,9 @@ class NibeHeatPump:
             logger.info(
                 f"   Param: 0x{param_index:02X}, Raw value: {raw_value} (0x{raw_value:04X}), Bytes: {' '.join(f'{b:02X}' for b in value_bytes)}"
             )
+            logger.info(f"   Checksum: 0x{checksum:02X}, Data length field: 0x{data_length:02X}")
             self._send_with_space_parity(packet_bytes)
-            time.sleep(0.1)
+            time.sleep(0.2)  # Increased delay for pump to process
 
             # Wait for ACK or NAK
             logger.debug("⏳ Waiting for pump response (ACK/NAK)...")
@@ -861,6 +869,7 @@ class NibeHeatPump:
             while time.time() - response_start < 2.0:
                 if self.serial.in_waiting > 0:
                     byte = self.serial.read(1)
+                    logger.debug(f"   Received byte: 0x{byte[0]:02X} (ACK=0x{self.pump.ack:02X}, NAK=0x{self.pump.nak:02X})")
                     if byte[0] == self.pump.ack:
                         logger.info("✅ Pump acknowledged write (ACK)")
 
@@ -890,6 +899,9 @@ class NibeHeatPump:
                         logger.warning(
                             "❌ Pump rejected write (NAK - checksum error), retrying..."
                         )
+                        break  # Try again
+                    else:
+                        logger.warning(f"   Unexpected byte during ACK/NAK wait: 0x{byte[0]:02X}")
                         break  # Try again
                 time.sleep(0.01)
             else:
