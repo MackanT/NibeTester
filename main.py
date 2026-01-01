@@ -11,9 +11,14 @@ This implementation passively reads parameters by responding to the pump's polli
 
 import serial
 import time
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Tuple
 from dataclasses import dataclass
 import logging
+import yaml
+import sys
+
+FULL_LINE = 53
+
 
 # Setup logging
 logging.basicConfig(
@@ -38,16 +43,46 @@ class Register:
     step_size: int = None  # Optional step size
 
 
-class Nibe360PProtocol:
-    """Handles Nibe 360P custom protocol"""
+@dataclass
+class Pump:
+    """Parameter definition for the heat pump"""
 
-    CMD_DATA = 0xC0
-    MASTER_ADDR = 0x24
-    RCU_ADDR = 0x14
-    ACK = 0x06
-    ENQ = 0x05
-    NAK = 0x15
-    ETX = 0x03
+    model: str
+    name: str
+    baudrate: int  # 9600, 19200, etc.
+    bit_mode: int  # 8 or 9
+    parity: str  # "MARK" or "SPACE"
+    # Protocol specific bytes (integers)
+    cmd_data: int  # 0xC0
+    master_addr: int  # 0x24
+    rcu_addr: int  # 0x14
+    ack: int  # 0x06
+    enq: int  # 0x05
+    nak: int  # 0x15
+    etx: int  # 0x03
+
+
+def _parse_byte_val(v, default: int):
+    """Helper: accept int or hex-string like '0x14' or decimal string and return int."""
+    if v is None:
+        return default
+    if isinstance(v, int):
+        return v
+    if isinstance(v, str):
+        try:
+            if v.startswith("0x") or v.startswith("0X"):
+                return int(v, 16)
+            return int(v)
+        except Exception:
+            return default
+    try:
+        return int(v)
+    except Exception:
+        return default
+
+
+class NibeProtocol:
+    """Handles Nibe heat pump custom protocol"""
 
     @staticmethod
     def calc_checksum(data: List[int]) -> int:
@@ -59,7 +94,9 @@ class Nibe360PProtocol:
 
     @staticmethod
     def parse_data_packet(
-        data: bytes, param_defs: Dict[int, Register] = None
+        data: bytes,
+        param_defs: Dict[int, Register] = None,
+        proto: Optional[Pump] = None,
     ) -> Optional[Dict]:
         """
         Parse data packet from pump
@@ -71,8 +108,13 @@ class Nibe360PProtocol:
             logger.debug(f"Packet too short: {len(data)} bytes")
             return None
 
-        if data[0] != Nibe360PProtocol.CMD_DATA:
-            logger.debug(f"Wrong start byte: {data[0]:02X} (expected C0)")
+        if proto is None:
+            raise ValueError("Protocol configuration (proto) is required")
+
+        cmd_data = proto.cmd_data
+
+        if data[0] != cmd_data:
+            logger.debug(f"Wrong start byte: {data[0]:02X} (expected {cmd_data:02X})")
             return None
 
         if data[1] != 0x00:
@@ -89,7 +131,7 @@ class Nibe360PProtocol:
             return None
 
         checksum_received = data[expected_size - 1]
-        checksum_calc = Nibe360PProtocol.calc_checksum(data[0 : expected_size - 1])
+        checksum_calc = NibeProtocol.calc_checksum(data[0 : expected_size - 1])
 
         if checksum_received != checksum_calc:
             logger.warning(
@@ -148,19 +190,26 @@ class Nibe360PProtocol:
         return {"sender": sender, "parameters": parameters}
 
 
-class Nibe360PHeatPump:
+class NibeHeatPump:
     """
-    Nibe 360P Heat Pump Interface
+    Nibe Heat Pump Interface
 
     Passively reads parameters by responding to the pump's addressing.
     Uses 9-bit mode via MARK/SPACE parity switching.
     """
 
-    def __init__(self, port: str, parameters: Optional[List[Register]] = None):
+    def __init__(
+        self,
+        port: str,
+        parameters: Optional[List[Register]] = None,
+        pump_info: Optional[Pump] = None,
+    ):
         self.port = port
         self.serial: Optional[serial.Serial] = None
         self.parameters: Dict[int, Register] = {}
         self.parameter_values: Dict[int, float] = {}
+        # pump_info holds protocol/baud/parity/etc
+        self.pump: Optional[Pump] = pump_info
 
         if parameters:
             for param in parameters:
@@ -169,17 +218,29 @@ class Nibe360PHeatPump:
     def connect(self) -> bool:
         """Connect to the heat pump"""
         try:
-            # Use MARK parity for receiving (9th bit detection)
+            # Determine baud and parity from pump config if provided
+            baud = (
+                self.pump.baudrate
+                if self.pump and hasattr(self.pump, "baudrate")
+                else 19200
+            )
+            parity_cfg = (
+                self.pump.parity.upper()
+                if self.pump and hasattr(self.pump, "parity")
+                else "MARK"
+            )
+            parity = serial.PARITY_MARK if parity_cfg == "MARK" else serial.PARITY_SPACE
+
             self.serial = serial.Serial(
                 port=self.port,
-                baudrate=19200,
+                baudrate=baud,
                 bytesize=serial.EIGHTBITS,
-                parity=serial.PARITY_MARK,  # 9-bit mode: MARK parity
+                parity=parity,
                 stopbits=serial.STOPBITS_ONE,
                 timeout=2.0,  # 2 second timeout for reads
             )
             logger.info(
-                f"✅ Connected to {self.port} at 19200 baud (9-bit mode: MARK parity)"
+                f"✅ Connected to {self.port} at {baud} baud (parity={parity_cfg})"
             )
             return True
         except Exception as e:
@@ -276,7 +337,10 @@ class Nibe360PHeatPump:
 
                 # Look for addressing sequence
                 if len(buffer) >= 2:
-                    if buffer[-2] == 0x00 and buffer[-1] == Nibe360PProtocol.RCU_ADDR:
+                    if not self.pump:
+                        raise ValueError("Pump configuration is required")
+                    expected_rcu = self.pump.rcu_addr
+                    if buffer[-2] == 0x00 and buffer[-1] == expected_rcu:
                         logger.info("✅ RCU addressed by pump!")
                         return True
 
@@ -302,10 +366,13 @@ class Nibe360PHeatPump:
                 buffer.extend(data)
                 logger.debug(f"Buffer: {buffer.hex(' ').upper()}")
 
-                # Look for start of data packet (C0)
-                if Nibe360PProtocol.CMD_DATA in buffer:
-                    # Find C0
-                    idx = buffer.index(Nibe360PProtocol.CMD_DATA)
+                # Look for start of data packet (CMD_DATA)
+                if not self.pump:
+                    raise ValueError("Pump configuration is required")
+                cmd_byte = self.pump.cmd_data
+                if cmd_byte in buffer:
+                    # Find start
+                    idx = buffer.index(cmd_byte)
                     buffer = buffer[idx:]  # Remove everything before C0
 
                     # Check if we have length byte
@@ -320,9 +387,9 @@ class Nibe360PHeatPump:
                                 f"📦 Complete packet received: {packet.hex(' ').upper()}"
                             )
 
-                            # Parse it - pass parameter definitions for size info
-                            parsed = Nibe360PProtocol.parse_data_packet(
-                                packet, self.parameters
+                            # Parse it - pass parameter definitions for size info and pump protocol
+                            parsed = NibeProtocol.parse_data_packet(
+                                packet, self.parameters, proto=self.pump
                             )
                             if parsed:
                                 return parsed
@@ -349,10 +416,10 @@ class Nibe360PHeatPump:
 
         Returns: Dictionary of parameter_index -> value
         """
-        logger.info(f"\n{'=' * 70}")
-        logger.info("📖 Reading Parameters from Pump")
-        logger.info(f"{'=' * 70}")
-        logger.info("Collecting all parameters... This may take a few cycles.\n")
+        print(f"\n{'=' * FULL_LINE}")
+        print("📖 Reading Parameters from Pump")
+        print(f"{'=' * FULL_LINE}")
+        print("Collecting all parameters... This may take a few cycles.\n")
 
         cycles_with_new_data = 0
         max_cycles_without_new = 3  # Stop after 3 cycles with no new parameters
@@ -364,8 +431,11 @@ class Nibe360PHeatPump:
                 break
 
             # Step 2: Send ACK (we're ready to receive data)
+            if not self.pump:
+                raise ValueError("Pump configuration is required")
+            ack_byte = self.pump.ack
             logger.info("📤 Sending ACK (ready to receive)...")
-            self._send_with_space_parity(bytes([Nibe360PProtocol.ACK]))
+            self._send_with_space_parity(bytes([ack_byte]))
 
             time.sleep(0.05)  # Small delay for pump to prepare data
 
@@ -401,8 +471,9 @@ class Nibe360PHeatPump:
                         )
 
                 # Step 4: Send ACK to confirm receipt
+                ack_byte = self.pump.ack
                 logger.info("📤 Sending ACK (data received OK)...")
-                self._send_with_space_parity(bytes([Nibe360PProtocol.ACK]))
+                self._send_with_space_parity(bytes([ack_byte]))
 
                 time.sleep(0.05)
 
@@ -411,7 +482,8 @@ class Nibe360PHeatPump:
                 while time.time() - etx_start < 1.0:
                     if self.serial.in_waiting > 0:
                         byte = self.serial.read(1)
-                        if byte[0] == Nibe360PProtocol.ETX or byte[0] == 0x03:
+                        expected_etx = self.pump.etx
+                        if byte[0] == expected_etx:
                             logger.debug("✅ Received ETX")
                             break
                     time.sleep(0.01)
@@ -436,110 +508,176 @@ class Nibe360PHeatPump:
         return self.parameter_values.copy()
 
 
-# Parameter definitions for Nibe 360P
-NIBE_360P_PARAMETERS = [
-    Register(0x00, "Produktkod", 1, 1.0, "", False, ""),
-    Register(0x01, "Utetemperatur", 2, 10.0, "°C", False, "M4.0"),
-    Register(0x02, "Temperatur VV-givare", 2, 10.0, "°C", False, "M1.0"),
-    Register(0x03, "Avluftstemperatur", 2, 10.0, "°C", False, "M5.1"),
-    Register(0x04, "Frånluftstemperatur", 2, 10.0, "°C", False, "M5.2"),
-    Register(0x05, "Förångartemperatur", 2, 10.0, "°C", False, "M5.0"),
-    Register(0x06, "Framledningstemp.", 2, 10.0, "°C", False, "M2.0"),
-    Register(0x07, "Returtemperatur", 2, 10.0, "°C", False, "M2.6"),
-    Register(0x08, "Temperatur kompressorgivare", 2, 10.0, "°C", False, "M1.1"),
-    Register(0x09, "Temperatur elpatrongivare", 2, 10.0, "°C", False, "M1.2"),
-    Register(0x0B, "Kurvlutning", 1, 1.0, "", True, "M2.1", -1, 15, 1),
-    Register(0x0C, "Förskjutning värmekurva", 1, 1.0, "", False, "M2.2", -10, 10),
-    Register(0x0D, "Beräknad framledningstemp.", 1, 1.0, "°C", False, "M2.0"),
-    Register(0x13, "Kompressor", 1, 1.0, "", False, ""),  # Bitmask!
-    # Register(0x13, "Cirkulationspump 1", 1, 1.0, "", False, "M9.1.4"), # Do something with bitmask!
-    Register(
-        0x14, "Tillsatsvärme", 2, 1.0, "", False, ""
-    ),  # Do something with bitmask!
-    # Register(0x14, "Driftläge säsong", 2, 1.0, "", True, ""), # Do something with bitmask!
-    # Register(0x14, "Elpanna", 2, 1.0, "", True, "M9.1.1"),
-    # Register(0x14, "Fläkthastighet", 2, 1.0, "", True, "", 0, 3), ##TODO menu
-    # Register(0x14, "Avfrostning", 2, 1.0, "", True, ""),
-    Register(0x15, "Driftläge auto", 2, 1.0, "", True, "M8.2.1"),
-    Register(0x16, "Högtryckslarm", 2, 1.0, "", False, ""),
-    # Register(0x16, "Lågtryckslarm", 2, 1.0, "", False, ""),
-    # Register(0x16, "Temperaturbegränsarlarm", 2, 1.0, "", False, ""),
-    # Register(0x16, "Filterlarm", 2, 1.0, "", False, ""),
-    # Register(0x16, "Givarfel", 2, 1.0, "", False, ""),
-    # Register(0x16, "Frånluftstemperaturslarm", 2, 1.0, "", False, ""),
-    Register(0x17, "Strömförbrukning L1", 2, 10.0, "A", False, "M8.3.3"),
-    Register(0x18, "Strömförbrukning L2", 2, 10.0, "A", False, "M8.3.4"),
-    Register(0x19, "Strömförbrukning L3", 2, 10.0, "A", False, "M8.3.5"),
-    Register(0x1A, "Fabriksinställning", 1, 1.0, "", True, "M9.1.6"),
-    Register(0x1B, "Antal starter kompressor", 2, 1.0, "", False, "M5.4"),
-    Register(0x1C, "Drifttid kompressor", 2, 1.0, "h", False, "M5.5"),
-    Register(0x1D, "Tidfaktor elpatron", 2, 1.0, "", False, "M9.1.8"),
-    Register(0x1E, "Maxtemperatur framledning", 1, 1.0, "°C", True, "M2.4", 10, 65),
-    Register(0x1F, "Mintemperatur framledning", 1, 1.0, "°C", True, "M2.3", 10, 65),
-    Register(0x22, "Kompensering yttre", 1, 1.0, "", True, "M2.5", -10, 10),
-    Register(0x24, "Intervall per. extra VV", 1, 1.0, "dygn", True, "M1.3", 0, 90),
-    Register(0x25, "Starta om FIGHTER360P", 2, 1.0, "", True, ""),
-    # Register(0x25, "Extern larmsignal 1 (RCU DI 1)", 2, 1.0, "", False, ""),
-    # Register(0x25, "Extern larmsignal 2 (RCU DI 2)", 21, 1.0, "", False, ""),
-    Register(0x26, "RCU förskjutning 1 (Reg1)", 1, 1.0, "", True, "M2.7", -10, 10),
-    Register(0x28, "Larmnivå frånluftstemperatur", 1, 1.0, "°C", True, "M5.6", 0, 20),
-    Register(0x29, "Klocka: år", 1, 1.0, "", False, ""),
-    Register(0x2A, "Klocka: månad", 1, 1.0, "", False, ""),
-    Register(0x2B, "Klocka: dag", 1, 1.0, "", False, ""),
-    Register(0x2C, "Klocka: timma", 1, 1.0, "", False, ""),
-    Register(0x2D, "Klocka: minut", 1, 1.0, "", False, ""),
-    Register(0x2E, "Klocka: sekund", 1, 1.0, "", False, ""),
-]
+def load_from_yaml(
+    file_path: str, pump_name: str = "nibe_360P"
+) -> Tuple[List[Register], Pump]:
+    """Load register definitions from a YAML file
+
+    Args:
+        file_path: Path to the YAML file
+        pump_name: Name of the pump model (default: "nibe_360P")
+
+    Returns:
+        List of Register objects for the specified pump
+    """
+    with open(file_path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+
+    # Navigate to the pump-specific registers
+    if "pumps" not in data:
+        raise ValueError("YAML file must have a 'pumps' top-level key")
+
+    # Support either a mapping (pumps: { name: {...} }) or a list of pump dicts
+    pumps_section = data["pumps"]
+    if isinstance(pumps_section, dict):
+        if pump_name not in pumps_section:
+            available = ", ".join(pumps_section.keys())
+            raise ValueError(
+                f"Pump '{pump_name}' not found. Available pumps: {available}"
+            )
+        pump_data = pumps_section[pump_name]
+    else:
+        # assume list
+        pump_list = pumps_section
+        pump_data = None
+        for p in pump_list:
+            if p.get("model") == pump_name or p.get("name") == pump_name:
+                pump_data = p
+                break
+        if pump_data is None:
+            available = ", ".join(
+                str(p.get("model") or p.get("name")) for p in pump_list
+            )
+            raise ValueError(
+                f"Pump '{pump_name}' not found. Available pumps: {available}"
+            )
+
+    # Build Pump instance with protocol bytes parsed
+    cmd_data = _parse_byte_val(pump_data.get("cmd_data"), 0xC0)
+    master_addr = _parse_byte_val(pump_data.get("master_addr"), 0x24)
+    rcu_addr = _parse_byte_val(pump_data.get("rcu_addr"), 0x14)
+    ack = _parse_byte_val(pump_data.get("ack"), 0x06)
+    enq = _parse_byte_val(pump_data.get("enq"), 0x05)
+    nak = _parse_byte_val(pump_data.get("nak"), 0x15)
+    etx = _parse_byte_val(pump_data.get("etx"), 0x03)
+
+    pump = Pump(
+        model=pump_data.get("model", pump_name),
+        name=pump_data.get("name", pump_data.get("model", pump_name)),
+        baudrate=pump_data.get("baudrate", 19200),
+        bit_mode=pump_data.get("bit_mode", 9),
+        parity=pump_data.get("parity", "MARK"),
+        cmd_data=cmd_data,
+        master_addr=master_addr,
+        rcu_addr=rcu_addr,
+        ack=ack,
+        enq=enq,
+        nak=nak,
+        etx=etx,
+    )
+    logger.info(f"✅ Loaded pump: {pump.name} at {pump.baudrate} baud")
+
+    if "registers" not in pump_data:
+        raise ValueError(f"Pump '{pump_name}' must have a 'registers' key")
+
+    registers = []
+    for item in pump_data["registers"]:
+        if item.get("ignore", False):
+            continue
+        reg = Register(
+            index=item.get("index", item.get("id")),
+            name=item["name"],
+            size=item["size"],
+            factor=item.get("factor", 1.0),
+            unit=item.get("unit", ""),
+            writable=item.get("writable", False),
+            menu_structure=item.get("menu_structure", ""),
+            min_value=item.get("min_value"),
+            max_value=item.get("max_value"),
+            step_size=item.get("step_size"),
+        )
+        registers.append(reg)
+
+    logger.info(f"✅ Loaded {len(registers)} registers for {pump_name}")
+    return registers, pump
 
 
 def main():
     """Main program"""
-    SERIAL_PORT = "/dev/ttyUSB0"
 
-    print("\n" + "=" * 70)
-    print("  Nibe 360P Heat Pump Reader")
-    print("=" * 70)
-    print()
+    NIBE_360P_PARAMETERS, PUMP = load_from_yaml("pumps.yaml")
+
+    if sys.platform.startswith("win"):
+        SERIAL_PORT = "COM3"
+        system_name = "Windows"
+    else:
+        SERIAL_PORT = "/dev/ttyUSB0"
+        system_name = "Linux/Mac"
+
+    logger.info(
+        f"✅ Code detected environment: {system_name}, using {SERIAL_PORT} as default serial port."
+    )
+
+    print("")
+    print("" + "=" * FULL_LINE)
+    print(f"  Configured for {PUMP.name} Heat Pump Reader")
+    print("=" * FULL_LINE)
+    print("")
     print("Options:")
     print("  1) Read parameters (normal operation)")
     print("  9) Capture bus traffic (diagnostic mode)")
-    print()
+    print("")
 
     choice = input("Choose option [1/9] (default: 1): ").strip() or "1"
+    print("")
 
-    print()
-    print(f"Serial Port: {SERIAL_PORT}")
-    print("Baudrate: 19200 baud, 9-bit mode (MARK parity)")
-    print()
+    logger.info("")
+    logger.info(f"Serial Port: {SERIAL_PORT}")
+    logger.info(
+        f"Baudrate: {PUMP.baudrate} baud, {PUMP.bit_mode}-bit mode ({PUMP.parity} parity)"
+    )
+    logger.info("")
+    pump = NibeHeatPump(SERIAL_PORT, parameters=NIBE_360P_PARAMETERS, pump_info=PUMP)
 
-    # Create pump instance
-    pump = Nibe360PHeatPump(SERIAL_PORT, parameters=NIBE_360P_PARAMETERS)
-
+    ## Failing pump connection
     if not pump.connect():
-        print("❌ Failed to connect!")
-        print("\nTroubleshooting:")
-        print("  1. Check serial port: ls /dev/ttyUSB*")
-        print("  2. Check permissions: sudo chmod 666 /dev/ttyUSB0")
-        print("  3. Verify RS-485 wiring: A→A, B→B, GND→GND")
+        logger.error("❌ Failed to connect!")
+        logger.error("\nTroubleshooting:")
+
+        if sys.platform.startswith("win"):
+            logger.error(
+                "  1. Check Device Manager → Ports (COM & LPT) for your adapter"
+            )
+            logger.error("  2. Verify the correct COM port number")
+            logger.error("  3. Install/update USB-RS485 driver if needed")
+            logger.error("  4. Verify RS-485 wiring: A→A, B→B, GND→GND")
+        else:
+            logger.error("  1. Check serial port: ls /dev/ttyUSB*")
+            logger.error("  2. Check permissions: sudo chmod 666 /dev/ttyUSB0")
+            logger.error(
+                "  3. Or add user to dialout group: sudo usermod -a -G dialout $USER"
+            )
+            logger.error("  4. Verify RS-485 wiring: A→A, B→B, GND→GND")
+
         return
 
     try:
+        # Diagnostic mode
         if choice == "9":
-            # Diagnostic mode
-            print("\n" + "=" * 70)
+            print("\n" + "=" * FULL_LINE)
             print("  BUS TRAFFIC CAPTURE")
-            print("=" * 70)
+            print("=" * FULL_LINE)
             print("\nCapturing raw RS-485 bus data...")
             print("Press Ctrl+C to stop...\n")
             time.sleep(2)
 
             pump.capture_bus_traffic(duration=15.0)
 
-        else:
-            # Normal operation
-            print("\n" + "=" * 70)
+        # Normal operation
+        if choice == "1":
+            print("\n" + "=" * FULL_LINE)
             print("  PARAMETER READING")
-            print("=" * 70)
+            print("=" * FULL_LINE)
             print("\nReading parameters from heat pump...")
             print("This will collect data from multiple cycles until complete.")
             print("\nPress Ctrl+C to stop early...\n")

@@ -1,0 +1,297 @@
+pumps:
+  - model: "nibe_360P"
+    name: "NIBE FIGHTER 360P"
+    manufacturer: "NIBE"
+    description: "NIBE FIGHTER 360P värmepump"
+    baudrate: 19200
+    bit_mode: 9
+    parity: "MARK"
+    cmd_data: 0xC0
+    master_addr: 0x24
+    rcu_addr: 0x14
+    ack: 0x06
+    enq: 0x05
+    nak: 0x15
+    etx: 0x03
+
+    registers:
+      - id: 0x00
+        name: "Produktkod"
+        size: 1
+        factor: 1.0
+        unit: ""
+        writable: false
+        menu_structure: ""
+        min_value: null
+        max_value: null
+        step_size: null
+      - id: 0x01
+        name: "Utetemperatur"
+        size: 2
+        factor: 10.0
+        unit: "°C"
+        writable: false
+        menu_structure: "M4.0"
+      - id: 0x02
+        name: "Temperatur VV-givare"
+        size: 2
+        factor: 10.0
+        unit: "°C"
+        writable: false
+        menu_structure: "M1.0"
+      - id: 0x03
+        name: "Avluftstemperatur"
+        size: 2
+        factor: 10.0
+        unit: "°C"
+        writable: false
+        menu_structure: "M5.1"
+      - id: 0x04
+        name: "Frånluftstemperatur"
+        size: 2
+        factor: 10.0
+        unit: "°C"
+        writable: false
+        menu_structure: "M5.2"
+      - id: 0x05
+        name: "Förångartemperatur"
+        size: 2
+        factor: 10.0
+        unit: "°C"
+        writable: false
+        menu_structure: "M5.0"
+      - id: 0x06
+        name: "Framledningstemp."
+        size: 2
+        factor: 10.0
+        unit: "°C"
+        writable: false
+        menu_structure: "M2.0"
+      - id: 0x07
+        name: "Returtemperatur"
+        size: 2
+        factor: 10.0
+        unit: "°C"
+        writable: false
+        menu_structure: "M2.6"
+      - id: 0x08
+        name: "Temperatur kompressorgivare"
+        size: 2
+        factor: 10.0
+        unit: "°C"
+        writable: false
+        menu_structure: "M1.1"
+      - id: 0x09
+        name: "Temperatur elpatrongivare"
+        size: 2
+        factor: 10.0
+        unit: "°C"
+        writable: false
+        menu_structure: "M1.2"
+      - id: 0x0B
+        name: "Kurvlutning"
+        size: 1
+        factor: 1.0
+        unit: ""
+        writable: true
+        menu_structure: "M2.1"
+        min_value: -1
+        max_value: 15
+        step_size: 1
+      - id: 0x0C
+        name: "Förskjutning värmekurva"
+        size: 1
+        factor: 1.0
+        unit: ""
+        writable: false
+        menu_structure: "M2.2"
+        min_value: -10
+        max_value: 10
+      - id: 0x0D
+        name: "Beräknad framledningstemp."
+        size: 1
+        factor: 1.0
+        unit: "°C"
+        writable: false
+        menu_structure: "M2.0"
+      - id: 0x13
+        name: "Kompressor"
+        size: 1
+        factor: 1.0
+        unit: ""
+        writable: false
+        menu_structure: ""
+      - id: 0x14
+        name: "Tillsatsvärme"
+        size: 2
+        factor: 1.0
+        unit: ""
+        writable: false
+        menu_structure: ""
+      - id: 0x15
+        name: "Driftläge auto"
+        size: 2
+        factor: 1.0
+        unit: ""
+        writable: true
+        menu_structure: "M8.2.1"
+      - id: 0x16
+        name: "Högtryckslarm"
+        size: 2
+        factor: 1.0
+        unit: ""
+        writable: false
+        menu_structure: ""
+      - id: 0x17
+        name: "Strömförbrukning L1"
+        size: 2
+        factor: 10.0
+        unit: "A"
+        writable: false
+        menu_structure: "M8.3.3"
+      - id: 0x18
+        name: "Strömförbrukning L2"
+        size: 2
+        factor: 10.0
+        unit: "A"
+        writable: false
+        menu_structure: "M8.3.4"
+      - id: 0x19
+        name: "Strömförbrukning L3"
+        size: 2
+        factor: 10.0
+        unit: "A"
+        writable: false
+        menu_structure: "M8.3.5"
+      - id: 0x1A
+        name: "Fabriksinställning"
+        size: 1
+        factor: 1.0
+        unit: ""
+        writable: true
+        menu_structure: "M9.1.6"
+      - id: 0x1B
+        name: "Antal starter kompressor"
+        size: 2
+        factor: 1.0
+        unit: ""
+        writable: false
+        menu_structure: "M5.4"
+      - id: 0x1C
+        name: "Drifttid kompressor"
+        size: 2
+        factor: 1.0
+        unit: "h"
+        writable: false
+        menu_structure: "M5.5"
+      - id: 0x1D
+        name: "Tidfaktor elpatron"
+        size: 2
+        factor: 1.0
+        unit: ""
+        writable: false
+        menu_structure: "M9.1.8"
+      - id: 0x1E
+        name: "Maxtemperatur framledning"
+        size: 1
+        factor: 1.0
+        unit: "°C"
+        writable: true
+        menu_structure: "M2.4"
+        min_value: 10
+        max_value: 65
+      - id: 0x1F
+        name: "Mintemperatur framledning"
+        size: 1
+        factor: 1.0
+        unit: "°C"
+        writable: true
+        menu_structure: "M2.3"
+        min_value: 10
+        max_value: 65
+      - id: 0x22
+        name: "Kompensering yttre"
+        size: 1
+        factor: 1.0
+        unit: ""
+        writable: true
+        menu_structure: "M2.5"
+        min_value: -10
+        max_value: 10
+        ignore: true
+      - id: 0x24
+        name: "Intervall per. extra VV"
+        size: 1
+        factor: 1.0
+        unit: "dygn"
+        writable: true
+        menu_structure: "M1.3"
+        min_value: 0
+        max_value: 90
+      - id: 0x25
+        name: "Starta om FIGHTER360P"
+        size: 2
+        factor: 1.0
+        unit: ""
+        writable: true
+        menu_structure: ""
+      - id: 0x26
+        name: "RCU förskjutning 1 (Reg1)"
+        size: 1
+        factor: 1.0
+        unit: ""
+        writable: true
+        menu_structure: "M2.7"
+        min_value: -10
+        max_value: 10
+      - id: 0x28
+        name: "Larmnivå frånluftstemperatur"
+        size: 1
+        factor: 1.0
+        unit: "°C"
+        writable: true
+        menu_structure: "M5.6"
+        min_value: 0
+        max_value: 20
+      - id: 0x29
+        name: "Klocka: år"
+        size: 1
+        factor: 1.0
+        unit: ""
+        writable: false
+        menu_structure: "M7.1"
+      - id: 0x2A
+        name: "Klocka: månad"
+        size: 1
+        factor: 1.0
+        unit: ""
+        writable: false
+        menu_structure: "M7.1"
+      - id: 0x2B
+        name: "Klocka: dag"
+        size: 1
+        factor: 1.0
+        unit: ""
+        writable: false
+        menu_structure: "M7.1"
+      - id: 0x2C
+        name: "Klocka: timma"
+        size: 1
+        factor: 1.0
+        unit: ""
+        writable: false
+        menu_structure: "M7.2"
+      - id: 0x2D
+        name: "Klocka: minut"
+        size: 1
+        factor: 1.0
+        unit: ""
+        writable: false
+        menu_structure: "M7.2"
+      - id: 0x2E
+        name: "Klocka: sekund"
+        size: 1
+        factor: 1.0
+        unit: ""
+        writable: false
+        menu_structure: "M7.2"
