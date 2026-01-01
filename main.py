@@ -34,9 +34,15 @@ class BitField:
     name: str  # Name of the bit field (e.g., "Kompressor")
     mask: int  # Bitmask to extract the bits (e.g., 0x02, 0x07, 0x40)
     sort_order: int  # Display order (used for sorting)
+    writable: bool  # Whether this bit field can be written to
     value_map: Optional[Dict[int, str]] = (
         None  # Optional mapping of integer values to text (e.g., {0: "OFF", 1: "ON"})
     )
+    unit: str = ""  # Unit for the value (e.g., "°C", "%")
+    min_value: Optional[int] = None  # Minimum value
+    max_value: Optional[int] = None  # Maximum value
+    step_size: Optional[int] = None  # Step size for incrementing
+    menu_structure: str = ""  # Menu structure location (e.g., "M2.1")
 
 
 @dataclass
@@ -695,6 +701,10 @@ def load_from_yaml(
                     raise ValueError(
                         f"Bit field in register '{item['name']}' must have 'name', 'mask', and 'sort_order'"
                     )
+                if "writable" not in bf:
+                    raise ValueError(
+                        f"Bit field '{bf.get('name', 'unknown')}' in register '{item['name']}' missing required field: writable"
+                    )
                 mask_val = _parse_byte_val(bf["mask"], None)
                 if mask_val is None:
                     raise ValueError(
@@ -715,7 +725,13 @@ def load_from_yaml(
                         name=bf["name"],
                         mask=mask_val,
                         sort_order=bf["sort_order"],
+                        writable=bf["writable"],
                         value_map=value_map,
+                        unit=bf.get("unit", ""),
+                        min_value=bf.get("min_value"),
+                        max_value=bf.get("max_value"),
+                        step_size=bf.get("step_size"),
+                        menu_structure=bf.get("menu_structure", ""),
                     )
                 )
 
@@ -861,7 +877,7 @@ def main():
                                     else:
                                         display_value = str(raw_value)
                                     print(
-                                        f"      [{idx:02X}.{i}] {bit_field.name:.<29} {display_value:>8}"
+                                        f"      [{idx:02X}.{i}] {bit_field.name:.<29} {display_value:>8} {bit_field.unit:<5} {bit_field.menu_structure}"
                                     )
                         else:
                             # Regular parameter
@@ -916,7 +932,7 @@ def main():
                                 else:
                                     display_value = str(raw_value)
                                 print(
-                                    f"      [{idx:02X}.{i}] {bit_field.name:.<29} {display_value:>8}"
+                                    f"      [{idx:02X}.{i}] {bit_field.name}: {display_value} {bit_field.unit}"
                                 )
                     else:
                         # Regular parameter

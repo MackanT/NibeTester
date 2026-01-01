@@ -128,18 +128,21 @@ pumps:
             value_map:
               0: "Från"
               1: "Till"
+            writeable: false
           - name: "Cirkulationspump 1"
             mask: 0x40
             sort_order: 2
             value_map:
               0: "Från"
               1: "Till"
+            writeable: false
           - name: "Cirkulationspump 2"
             mask: 0x01
             sort_order: 3
             value_map:
               0: "Från"
               1: "Till"
+            writeable: false
       - id: 0x14
         name: "Tillsatsvärme"
         size: 2
@@ -160,6 +163,7 @@ pumps:
               5: "Elsteg I + III (9kW)"
               6: "Elsteg II + III (10.5kW)"
               7: "Elsteg I + II + III (13.5kW)"
+            writeable: false
           - name: "Driftläge säsong"
             mask: 0x0030
             sort_order: 2
@@ -167,12 +171,14 @@ pumps:
               0: "Sommar"
               1: "Vår/Höst"
               2: "Vinter"
+            writable: true
           - name: "Elpanna"
             mask: 0x0100
             sort_order: 3
             value_map:
               0: "Från"
               1: "Till"
+            writable: true
           - name: "Fläkthastighet"
             mask: 0x1800
             sort_order: 4
@@ -181,24 +187,28 @@ pumps:
               1: "Hast I"
               2: "Normal"
               3: "Hast II"
+            writable: false
           - name: "Avfrostning"
             mask: 0x0400
             sort_order: 5
             value_map:
               0: "Från"
               1: "Till"
+            writeable: false
           - name: "Kompensering yttre (indikation om aktiv)"
             mask: 0x0004
             sort_order: 6
             value_map:
               0: "Från"
               1: "Till"
+            writable: false
           - name: "Kompensering yttre 2 (indikation om aktiv)"
             mask: 0x0008
             sort_order: 7
             value_map:
               0: "Från"
               1: "Till"
+            writable: false
 
       - id: 0x15
         name: "Driftläge auto"
