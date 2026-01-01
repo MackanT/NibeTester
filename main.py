@@ -1,8 +1,8 @@
 """
-Nibe 360P Heat Pump RS-485 Communication
+Nibe Heat Pump RS-485 Communication
 
 Protocol:
-- Baudrate: 19200
+- Baudrate: Parametrizeable (F360P uses 19200)
 - Format: 9-bit mode using MARK/SPACE parity
 - Custom Nibe protocol (NOT standard Modbus)
 
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Register:
-    """Parameter definition for Nibe 360P"""
+    """Register definition for Nibe communication"""
 
     index: int  # Parameter index (0x01, 0x02, etc.)
     name: str
@@ -204,12 +204,14 @@ class NibeHeatPump:
         parameters: Optional[List[Register]] = None,
         pump_info: Optional[Pump] = None,
     ):
+        if not pump_info:
+            raise ValueError("Pump configuration (pump_info) is required")
+
         self.port = port
         self.serial: Optional[serial.Serial] = None
         self.parameters: Dict[int, Register] = {}
         self.parameter_values: Dict[int, float] = {}
-        # pump_info holds protocol/baud/parity/etc
-        self.pump: Optional[Pump] = pump_info
+        self.pump: Pump = pump_info
 
         if parameters:
             for param in parameters:
@@ -218,17 +220,12 @@ class NibeHeatPump:
     def connect(self) -> bool:
         """Connect to the heat pump"""
         try:
-            # Determine baud and parity from pump config if provided
-            baud = (
-                self.pump.baudrate
-                if self.pump and hasattr(self.pump, "baudrate")
-                else 19200
-            )
-            parity_cfg = (
-                self.pump.parity.upper()
-                if self.pump and hasattr(self.pump, "parity")
-                else "MARK"
-            )
+            # Require pump configuration
+            if not self.pump:
+                raise ValueError("Pump configuration is required")
+
+            baud = self.pump.baudrate
+            parity_cfg = self.pump.parity.upper()
             parity = serial.PARITY_MARK if parity_cfg == "MARK" else serial.PARITY_SPACE
 
             self.serial = serial.Serial(
@@ -268,6 +265,9 @@ class NibeHeatPump:
         """
         Capture and display raw bus traffic to understand the protocol
         """
+        if not self.pump:
+            raise ValueError("Pump configuration is required")
+
         logger.info(f"📡 Capturing bus traffic for {duration} seconds...")
         logger.info("Looking for patterns in the data...")
 
@@ -288,9 +288,9 @@ class NibeHeatPump:
 
             time.sleep(0.001)
 
-        print("\n\n" + "=" * 70)
+        print("\n\n" + "=" * FULL_LINE)
         print(f"  Captured {byte_count} bytes")
-        print("=" * 70)
+        print("=" * FULL_LINE)
 
         # Analyze for patterns
         if len(buffer) > 0:
@@ -298,17 +298,19 @@ class NibeHeatPump:
             print(f"  - Most common byte: 0x{max(set(buffer), key=buffer.count):02X}")
             print(f"  - Unique bytes: {len(set(buffer))}")
 
-            # Look for 0x00 0x14 pattern
-            count_00_14 = sum(
+            # Look for addressing pattern (0x00 followed by RCU address)
+            count_addressing = sum(
                 1
                 for i in range(len(buffer) - 1)
-                if buffer[i] == 0x00 and buffer[i + 1] == 0x14
+                if buffer[i] == 0x00 and buffer[i + 1] == self.pump.rcu_addr
             )
-            print(f"  - Found '00 14' pattern: {count_00_14} times")
+            print(
+                f"  - Found '00 {self.pump.rcu_addr:02X}' (addressing) pattern: {count_addressing} times"
+            )
 
-            # Look for C0 (data packet start)
-            count_c0 = buffer.count(0xC0)
-            print(f"  - Found 'C0' (data start): {count_c0} times")
+            # Look for CMD_DATA (data packet start)
+            count_cmd = buffer.count(self.pump.cmd_data)
+            print(f"  - Found '{self.pump.cmd_data:02X}' (CMD_DATA): {count_cmd} times")
 
             # Show first 100 bytes in hex
             print("\n📝 First 100 bytes:")
@@ -337,10 +339,7 @@ class NibeHeatPump:
 
                 # Look for addressing sequence
                 if len(buffer) >= 2:
-                    if not self.pump:
-                        raise ValueError("Pump configuration is required")
-                    expected_rcu = self.pump.rcu_addr
-                    if buffer[-2] == 0x00 and buffer[-1] == expected_rcu:
+                    if buffer[-2] == 0x00 and buffer[-1] == self.pump.rcu_addr:
                         logger.info("✅ RCU addressed by pump!")
                         return True
 
@@ -367,10 +366,8 @@ class NibeHeatPump:
                 logger.debug(f"Buffer: {buffer.hex(' ').upper()}")
 
                 # Look for start of data packet (CMD_DATA)
-                if not self.pump:
-                    raise ValueError("Pump configuration is required")
-                cmd_byte = self.pump.cmd_data
-                if cmd_byte in buffer:
+                if self.pump.cmd_data in buffer:
+                    cmd_byte = self.pump.cmd_data
                     # Find start
                     idx = buffer.index(cmd_byte)
                     buffer = buffer[idx:]  # Remove everything before C0
@@ -431,11 +428,8 @@ class NibeHeatPump:
                 break
 
             # Step 2: Send ACK (we're ready to receive data)
-            if not self.pump:
-                raise ValueError("Pump configuration is required")
-            ack_byte = self.pump.ack
             logger.info("📤 Sending ACK (ready to receive)...")
-            self._send_with_space_parity(bytes([ack_byte]))
+            self._send_with_space_parity(bytes([self.pump.ack]))
 
             time.sleep(0.05)  # Small delay for pump to prepare data
 
@@ -471,9 +465,8 @@ class NibeHeatPump:
                         )
 
                 # Step 4: Send ACK to confirm receipt
-                ack_byte = self.pump.ack
                 logger.info("📤 Sending ACK (data received OK)...")
-                self._send_with_space_parity(bytes([ack_byte]))
+                self._send_with_space_parity(bytes([self.pump.ack]))
 
                 time.sleep(0.05)
 
@@ -482,8 +475,7 @@ class NibeHeatPump:
                 while time.time() - etx_start < 1.0:
                     if self.serial.in_waiting > 0:
                         byte = self.serial.read(1)
-                        expected_etx = self.pump.etx
-                        if byte[0] == expected_etx:
+                        if byte[0] == self.pump.etx:
                             logger.debug("✅ Received ETX")
                             break
                     time.sleep(0.01)
@@ -552,21 +544,48 @@ def load_from_yaml(
                 f"Pump '{pump_name}' not found. Available pumps: {available}"
             )
 
-    # Build Pump instance with protocol bytes parsed
-    cmd_data = _parse_byte_val(pump_data.get("cmd_data"), 0xC0)
-    master_addr = _parse_byte_val(pump_data.get("master_addr"), 0x24)
-    rcu_addr = _parse_byte_val(pump_data.get("rcu_addr"), 0x14)
-    ack = _parse_byte_val(pump_data.get("ack"), 0x06)
-    enq = _parse_byte_val(pump_data.get("enq"), 0x05)
-    nak = _parse_byte_val(pump_data.get("nak"), 0x15)
-    etx = _parse_byte_val(pump_data.get("etx"), 0x03)
+    # Build Pump instance with protocol bytes parsed (all required)
+    required_protocol_fields = [
+        "cmd_data",
+        "master_addr",
+        "rcu_addr",
+        "ack",
+        "enq",
+        "nak",
+        "etx",
+    ]
+    missing_fields = [f for f in required_protocol_fields if f not in pump_data]
+    if missing_fields:
+        raise ValueError(
+            f"Pump '{pump_name}' missing required protocol fields: {', '.join(missing_fields)}"
+        )
+
+    cmd_data = _parse_byte_val(pump_data["cmd_data"], None)
+    master_addr = _parse_byte_val(pump_data["master_addr"], None)
+    rcu_addr = _parse_byte_val(pump_data["rcu_addr"], None)
+    ack = _parse_byte_val(pump_data["ack"], None)
+    enq = _parse_byte_val(pump_data["enq"], None)
+    nak = _parse_byte_val(pump_data["nak"], None)
+    etx = _parse_byte_val(pump_data["etx"], None)
+
+    # Validate all protocol bytes were parsed successfully
+    if None in [cmd_data, master_addr, rcu_addr, ack, enq, nak, etx]:
+        raise ValueError(f"Failed to parse protocol bytes for pump '{pump_name}'")
+
+    # Validate required pump fields
+    required_pump_fields = ["model", "name", "baudrate", "bit_mode", "parity"]
+    missing_pump_fields = [f for f in required_pump_fields if f not in pump_data]
+    if missing_pump_fields:
+        raise ValueError(
+            f"Pump '{pump_name}' missing required fields: {', '.join(missing_pump_fields)}"
+        )
 
     pump = Pump(
-        model=pump_data.get("model", pump_name),
-        name=pump_data.get("name", pump_data.get("model", pump_name)),
-        baudrate=pump_data.get("baudrate", 19200),
-        bit_mode=pump_data.get("bit_mode", 9),
-        parity=pump_data.get("parity", "MARK"),
+        model=pump_data["model"],
+        name=pump_data["name"],
+        baudrate=pump_data["baudrate"],
+        bit_mode=pump_data["bit_mode"],
+        parity=pump_data["parity"],
         cmd_data=cmd_data,
         master_addr=master_addr,
         rcu_addr=rcu_addr,
@@ -584,13 +603,39 @@ def load_from_yaml(
     for item in pump_data["registers"]:
         if item.get("ignore", False):
             continue
+
+        # Validate required register fields
+        required_reg_fields = ["name", "size"]
+        missing_reg_fields = [f for f in required_reg_fields if f not in item]
+        if missing_reg_fields:
+            raise ValueError(
+                f"Register in pump '{pump_name}' missing required fields: {', '.join(missing_reg_fields)}"
+            )
+
+        # Validate index (accept either 'index' or 'id')
+        index_val = item.get("index") or item.get("id")
+        if index_val is None:
+            raise ValueError(
+                f"Register '{item.get('name', 'unknown')}' in pump '{pump_name}' must have 'index' or 'id' field"
+            )
+
+        # Validate factor and writable are present (can be 0 or False, but must be explicitly set)
+        if "factor" not in item:
+            raise ValueError(
+                f"Register '{item['name']}' in pump '{pump_name}' missing required field: factor"
+            )
+        if "writable" not in item:
+            raise ValueError(
+                f"Register '{item['name']}' in pump '{pump_name}' missing required field: writable"
+            )
+
         reg = Register(
-            index=item.get("index", item.get("id")),
+            index=index_val,
             name=item["name"],
             size=item["size"],
-            factor=item.get("factor", 1.0),
+            factor=item["factor"],
             unit=item.get("unit", ""),
-            writable=item.get("writable", False),
+            writable=item["writable"],
             menu_structure=item.get("menu_structure", ""),
             min_value=item.get("min_value"),
             max_value=item.get("max_value"),
