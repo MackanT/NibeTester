@@ -852,7 +852,9 @@ class NibeHeatPump:
                 value_bytes = [value_high, value_low]
 
             # Data payload: 00 <param_index> <value_bytes> (same format as reads)
-            data_payload = [0x00, param_index] + value_bytes
+            data_payload = [
+                param_index
+            ] + value_bytes  ## TODO prepend 00 separator for 2byte values
             # Length field = payload size + 1 for checksum byte
             data_length = len(data_payload) + 1
 
