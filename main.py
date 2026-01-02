@@ -1513,11 +1513,12 @@ def main():
                     pump.serial.reset_input_buffer()
                     logger.info("🧹 Cleared buffer before sending packet")
 
-                    # Send custom packet for register 0x26 - TRY WITH LENGTH=4 (including checksum)
-                    # Packet: C0 00 14 04 00 26 01 F7
-                    # Register 0x26, value 1, size=1 byte, length=4 (includes checksum)
+                    # Send custom packet for register 0x26 (RCU förskjutning 1)
+                    # User confirms writable - real RCU modifies via RS-485
+                    # Packet: C0 00 14 03 00 26 01 F0 (value=1)
+                    # Register 0x26, value 1, size=1 byte, length=3 (payload only)
                     custom_packet = bytes(
-                        [0xC0, 0x00, 0x14, 0x04, 0x00, 0x26, 0x01, 0xF7]
+                        [0xC0, 0x00, 0x14, 0x03, 0x00, 0x26, 0x01, 0xF0]
                     )
                     logger.info(
                         f"📤 Sending custom packet: {custom_packet.hex(' ').upper()}"
