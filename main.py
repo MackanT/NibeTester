@@ -1518,7 +1518,7 @@ def main():
                     # Even though value is 1 byte, pad with 0x00 to match size=2 format
                     # Packet: C0 00 14 04 00 26 00 01 F6 (value=1, padded as 0x0001)
                     custom_packet = bytes(
-                        [0xC0, 0x00, 0x14, 0x04, 0x00, 0x26, 0x00, 0x01, 0xF6]
+                        [0xC0, 0x00, 0x14, 0x04, 0x00, 0x26, 0x00, 0x01, 0xF7]
                     )
                     logger.info(
                         f"📤 Sending custom packet: {custom_packet.hex(' ').upper()}"
