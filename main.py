@@ -1511,20 +1511,32 @@ def main():
                 else:
                     # Send custom packet
                     custom_packet = bytes(
-                        [0xC0, 0x00, 0x14, 0x03, 0x00, 0x1E, 0x26, 0xEF]
+                        [0xC0, 0x00, 0x14, 0x04, 0x00, 0x14, 0x01, 0x45, 0x80]
                     )
                     logger.info(
                         f"📤 Sending custom packet: {custom_packet.hex(' ').upper()}"
                     )
                     pump._send_with_space_parity(custom_packet)
+
+                    # Check immediately
+                    logger.info("⏳ Checking buffer immediately after send...")
+                    logger.info(f"   Current parity: {pump.serial.parity}")
+                    logger.info(f"   Buffer: {pump.serial.in_waiting} bytes")
+
+                    # Wait 0.15s and check again
                     time.sleep(0.15)
+                    logger.info(
+                        f"⏳ After 0.15s - Buffer: {pump.serial.in_waiting} bytes"
+                    )
+
+                    # Wait another 0.35s (total 0.5s) and check
+                    time.sleep(0.35)
+                    logger.info(
+                        f"⏳ After 0.5s total - Buffer: {pump.serial.in_waiting} bytes"
+                    )
 
                     # Wait for response
-                    logger.info("⏳ Waiting for pump response...")
-                    logger.info(f"   Current parity: {pump.serial.parity}")
-                    logger.info(
-                        f"   Bytes in buffer before wait: {pump.serial.in_waiting}"
-                    )
+                    logger.info("⏳ Starting response wait loop...")
                     response_start = time.time()
                     response_bytes = []
                     while time.time() - response_start < 3.0:
