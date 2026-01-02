@@ -1475,104 +1475,110 @@ def main():
         # Send custom packet
         if choice == "4":
             print("\n" + "=" * FULL_LINE)
-            print("  SEND CUSTOM PACKET - BRUTE FORCE CHECKSUM")
+            print("  SEND CUSTOM PACKET")
             print("=" * FULL_LINE)
 
-            # Base packet WITHOUT checksum - use length=4 (padding size=1 to 2 bytes)
-            # Forum example: C0 00 14 04 00 14 01 45 worked (2-byte value)
-            # So for 1-byte: pad with leading 0x00 to make it 2 bytes
+            # Test packet for register 0x26, value=1, length=4 (padded to 2 bytes)
             base_packet = [0xC0, 0x00, 0x14, 0x04, 0x00, 0x26, 0x00, 0x01]
+            checksum = NibeProtocol.calc_checksum(base_packet)
+            package_bytes = base_packet + [checksum]
 
-            # Calculate what we THINK the checksum should be
-            calculated_checksum = NibeProtocol.calc_checksum(base_packet)
-            print(f"\nBase packet: {bytes(base_packet).hex(' ').upper()}")
-            print(f"Register 0x26 (size=1), value=1, length=4 (padded to 2 bytes)")
-            print(f"Calculated checksum: 0x{calculated_checksum:02X}")
-            print(f"\nTrying all 256 possible checksums until ACK...\n")
+            print(f"\nTest packet: {bytes(package_bytes).hex(' ').upper()}")
+            print(f"Register: 0x26 (RCU förskjutning 1)")
+            print(f"Value: 1 (padded as 0x00 0x01)")
+            print(f"Length: 4")
+            print(f"Checksum: 0x{checksum:02X}\n")
             time.sleep(1)
 
-            # Try all possible checksums
-            for test_checksum in range(0x00, 0x100):
-                package_bytes = base_packet + [test_checksum]
-
-                print(f"Try checksum 0x{test_checksum:02X}: ", end="", flush=True)
-
-                # Wait for pump to address us
-                if not pump._wait_for_addressing(timeout=5.0, verbose=False):
-                    print("❌ Timeout")
-                    continue
-
+            # Wait for pump to address us
+            if not pump._wait_for_addressing(timeout=5.0):
+                print("❌ Pump did not address RCU")
+            else:
                 # Clear buffer
                 pump.serial.reset_input_buffer()
 
                 # Send ENQ
+                logger.info("📤 Sending ENQ (write request)...")
                 pump._send_with_space_parity(bytes([pump.pump.enq]))
                 time.sleep(0.05)
 
                 # Wait for ACK from pump
+                logger.info("⏳ Waiting for pump ACK...")
                 ack_start = time.time()
                 pump_acked = False
                 while time.time() - ack_start < 2.0:
                     if pump.serial.in_waiting > 0:
                         byte = pump.serial.read(1)
+                        logger.info(f"   Received byte: 0x{byte[0]:02X}")
                         if byte[0] == pump.pump.ack:
+                            logger.info("✅ Pump acknowledged write request")
                             pump_acked = True
                             break
                     time.sleep(0.01)
 
                 if not pump_acked:
-                    print("❌ No ENQ ACK")
-                    continue
+                    print("❌ Pump did not acknowledge ENQ")
+                else:
+                    # Clear buffer before sending packet
+                    pump.serial.reset_input_buffer()
+                    logger.info("🧹 Cleared buffer before sending packet")
 
-                # Clear buffer before sending packet
-                pump.serial.reset_input_buffer()
+                    # Send packet
+                    custom_packet = bytes(package_bytes)
+                    logger.info(
+                        f"📤 Sending custom packet: {custom_packet.hex(' ').upper()}"
+                    )
+                    pump._send_with_space_parity(custom_packet)
 
-                # Send packet with current test checksum
-                custom_packet = bytes(package_bytes)
-                pump._send_with_space_parity(custom_packet)
+                    # Wait for pump response
+                    logger.info("⏳ Waiting for pump response...")
+                    response_timeout = time.time() + 0.5
 
-                # Wait for pump response (ACK/NAK)
-                response_timeout = time.time() + 1.0  # Increased to 1 second
-                got_response = False
+                    while time.time() < response_timeout:
+                        if pump.serial.in_waiting > 0:
+                            first_byte = pump.serial.read(1)[0]
+                            logger.info(
+                                f"   🎯 Received: 0x{first_byte:02X} (ACK=0x{pump.pump.ack:02X}, NAK=0x{pump.pump.nak:02X})"
+                            )
 
-                while time.time() < response_timeout:
-                    if pump.serial.in_waiting > 0:
-                        first_byte = pump.serial.read(1)[0]
+                            if first_byte == pump.pump.ack:
+                                logger.info("✅ Pump sent ACK!")
+                                # Clear any remaining bytes
+                                pump.serial.reset_input_buffer()
+                                # Send ETX
+                                pump.serial.parity = serial.PARITY_MARK
+                                pump.serial.write(bytes([pump.pump.etx]))
+                                pump.serial.flush()
+                                logger.info("📤 Sent *ETX")
+                                print("\n✅ Custom packet sent successfully!\n")
+                                break
+                            elif first_byte == pump.pump.nak:
+                                logger.error("❌ Pump sent NAK - checksum error")
+                                pump.serial.reset_input_buffer()
+                                break
+                            else:
+                                logger.warning(
+                                    f"   Unexpected byte 0x{first_byte:02X}, checking next..."
+                                )
+                                continue
+                        time.sleep(0.001)
+                    else:
+                        logger.error("❌ Timeout waiting for ACK/NAK")
+                        logger.info(
+                            f"   Buffer at timeout: {pump.serial.in_waiting} bytes"
+                        )
 
-                        if first_byte == pump.pump.ack:
-                            print(f"✅ ACK! Correct checksum is 0x{test_checksum:02X}")
-                            print(f"   Full packet: {custom_packet.hex(' ').upper()}")
-                            print(f"   Calculated was: 0x{calculated_checksum:02X}")
+                    # Additional checks
+                    time.sleep(0.15)
+                    logger.info(
+                        f"⏳ After 0.2s total - Buffer: {pump.serial.in_waiting} bytes"
+                    )
 
-                            # Send ETX to complete
-                            pump.serial.parity = serial.PARITY_MARK
-                            pump.serial.write(bytes([pump.pump.etx]))
-                            pump.serial.flush()
+                    time.sleep(0.35)
+                    logger.info(
+                        f"⏳ After 0.5s total - Buffer: {pump.serial.in_waiting} bytes"
+                    )
 
-                            print("\n✅ SUCCESS! Write complete.\n")
-                            got_response = True
-                            break
-                        elif first_byte == pump.pump.nak:
-                            print(f"❌ NAK (bad checksum)")
-                            got_response = True
-                            break
-                        else:
-                            # Unexpected byte - log it but keep checking
-                            print(f"   Got 0x{first_byte:02X}, ", end="", flush=True)
-                            continue
-                    time.sleep(0.001)
-
-                if got_response and first_byte == pump.pump.ack:
-                    # Success! Stop brute force
-                    break
-
-                if not got_response:
-                    # Check if there were ANY bytes
-                    bytes_in_buffer = pump.serial.in_waiting
-                    print(f"⏱️ Timeout (buffer: {bytes_in_buffer} bytes)")
-
-                # Small delay before next attempt
-                time.sleep(0.2)
     except KeyboardInterrupt:
         print("\n\n⚠️ Interrupted by user")
 
