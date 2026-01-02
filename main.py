@@ -1617,51 +1617,57 @@ def main():
 
                 # Wait for pump response
                 logger.info("⏳ Waiting for pump response...")
+                logger.info("   Looking for ACK from PUMP MASTER (0x24)...")
                 response_timeout = (
                     time.time() + 1.0
                 )  # Increased to 1 second to catch slow NAKs
                 got_ack = False
+                ack_source = None
 
                 while time.time() < response_timeout:
                     if pump.serial.in_waiting > 0:
                         first_byte = pump.serial.read(1)[0]
+
+                        # Check if this looks like addressing (00 followed by device address)
+                        if first_byte == 0x00 and pump.serial.in_waiting > 0:
+                            next_byte = pump.serial.read(1)[0]
+                            ack_source = next_byte
+                            logger.info(
+                                f"   🔍 Addressing detected: 0x00 0x{next_byte:02X} (device: "
+                                f"{'PUMP MASTER' if next_byte == 0x24 else 'RELAY' if next_byte == 0xF5 else 'DISPLAY' if next_byte == 0xF9 else 'RCU' if next_byte == 0x14 else 'UNKNOWN'})"
+                            )
+                            # Read the ACK that should follow
+                            if pump.serial.in_waiting > 0:
+                                time.sleep(0.01)
+                                if pump.serial.in_waiting > 0:
+                                    ack_byte = pump.serial.read(1)[0]
+                                    if ack_byte == pump.pump.ack:
+                                        logger.info(
+                                            f"   📥 Device 0x{next_byte:02X} sent ACK"
+                                        )
+                                        if next_byte == 0x24:
+                                            logger.info(
+                                                "   ✅ ACK from PUMP MASTER - this is what we need!"
+                                            )
+                                            got_ack = True
+                                            break
+                                        else:
+                                            logger.warning(
+                                                f"   ⚠️  ACK from 0x{next_byte:02X}, not pump master"
+                                            )
+                            continue
+
                         logger.info(
                             f"   🎯 Received: 0x{first_byte:02X} (ACK=0x{pump.pump.ack:02X}, NAK=0x{pump.pump.nak:02X})"
                         )
 
                         if first_byte == pump.pump.ack:
-                            logger.info(f"✅ {packet_name}: Pump sent ACK!")
-                            # Clear any remaining bytes
-                            pump.serial.reset_input_buffer()
-                            # Send ETX
-                            pump.serial.parity = serial.PARITY_MARK
-                            pump.serial.write(bytes([pump.pump.etx]))
-                            pump.serial.flush()
-                            logger.info("📤 Sent *ETX")
-                            print(f"\n✅ {packet_name}: SUCCESS!\n")
-
-                            # VERIFY WRITE - Read back the register to confirm
-                            print("🔍 Verifying write by reading back register 0x26...")
-                            time.sleep(2)  # Wait for write to complete
-                            pump.serial.reset_input_buffer()
-                            verify_value = pump.read_single_parameter(
-                                0x26, timeout=10.0
+                            logger.warning(
+                                f"   ⚠️  Bare ACK received (not from pump master)"
                             )
-                            if verify_value is not None:
-                                print(f"   Read value: {verify_value}")
-                                if abs(verify_value - 1.0) < 0.1:
-                                    print("   ✅ WRITE VERIFIED! Value changed to 1!")
-                                else:
-                                    print(
-                                        f"   ⚠️  Value is still {verify_value}, write did NOT persist"
-                                    )
-                            else:
-                                print("   ⚠️  Could not read back value")
-
-                            got_ack = True
-                            break
+                            continue
                         elif first_byte == pump.pump.nak:
-                            logger.error(f"❌ {packet_name}: Pump sent NAK")
+                            logger.error(f"❌ {packet_name}: NAK received")
                             pump.serial.reset_input_buffer()
                             break
                         else:
@@ -1670,9 +1676,52 @@ def main():
                             )
                             continue
                     time.sleep(0.001)
+
+                if got_ack:
+                    # Send ETX
+                    pump.serial.parity = serial.PARITY_MARK
+                    pump.serial.write(bytes([pump.pump.etx]))
+                    pump.serial.flush()
+                    logger.info("📤 Sent *ETX")
+                    print(f"\n✅ {packet_name}: Got ACK from PUMP MASTER!\n")
+
+                    # VERIFY WRITE - Read back the register to confirm
+                    print("🔍 Verifying write by reading back register 0x26...")
+                    time.sleep(2)  # Wait for write to complete
+                    pump.serial.reset_input_buffer()
+                    verify_value = pump.read_single_parameter(0x26, timeout=10.0)
+                    if verify_value is not None:
+                        print(f"   Read value: {verify_value}")
+                        if abs(verify_value - 1.0) < 0.1:
+                            print("   ✅ WRITE VERIFIED! Value changed to 1!")
+                        else:
+                            print(
+                                f"   ⚠️  Value is still {verify_value}, write did NOT persist"
+                            )
+                            print(
+                                "\n   💡 CONCLUSION: Pump does NOT support writes via RS-485 emulation"
+                            )
+                            print(
+                                "      The FIGHTER 360P likely requires a physical RCU device for writes."
+                            )
+                    else:
+                        print("   ⚠️  Could not read back value")
                 else:
-                    logger.error(f"❌ {packet_name}: Timeout waiting for ACK/NAK")
-                    logger.info(f"   Buffer at timeout: {pump.serial.in_waiting} bytes")
+                    if ack_source:
+                        logger.warning(
+                            f"❌ Only got ACK from device 0x{ack_source:02X}, NOT from pump master (0x24)"
+                        )
+                        print(
+                            f"\n⚠️  {packet_name}: ACK from wrong device (0x{ack_source:02X})"
+                        )
+                        print("   Pump master (0x24) did not respond to write request")
+                        print(
+                            "\n   💡 This suggests the FIGHTER 360P does NOT support writes via RS-485"
+                        )
+                    else:
+                        logger.error(
+                            f"❌ {packet_name}: Timeout - no response from pump"
+                        )
 
                 # Additional checks
                 time.sleep(0.15)
