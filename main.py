@@ -1511,7 +1511,7 @@ def main():
                 else:
                     # Send custom packet
                     custom_packet = bytes(
-                        [0xC0, 0x00, 0x14, 0x04, 0x00, 0x14, 0x01, 0x45, 0x80]
+                        [0xC0, 0x00, 0x14, 0x03, 0x00, 0x26, 0x01, 0xF0]
                     )
                     logger.info(
                         f"📤 Sending custom packet: {custom_packet.hex(' ').upper()}"
