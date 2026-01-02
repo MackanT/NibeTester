@@ -1478,16 +1478,13 @@ def main():
             print("  SEND CUSTOM PACKET - BRUTE FORCE CHECKSUM")
             print("=" * FULL_LINE)
 
-            # Base packet WITHOUT checksum
-            base_packet = [0xC0, 0x00, 0x14, 0x04, 0x00, 0x26, 0x00, 0x01]
+            # Base packet WITHOUT checksum - size=1 register, send 1 byte only
+            base_packet = [0xC0, 0x00, 0x14, 0x03, 0x00, 0x26, 0x01]
 
             # Calculate what we THINK the checksum should be
             calculated_checksum = NibeProtocol.calc_checksum(base_packet)
             print(f"\nBase packet: {bytes(base_packet).hex(' ').upper()}")
-            print(f"Calculated checksum: 0x{calculated_checksum:02X}")
-            print(f"\nTrying all 256 possible checksums until ACK...\n")
-            time.sleep(2)
-
+            print(f"Register 0x26 (size=1), value=1, length=3 (1 byte value)")
             # Try all possible checksums
             for test_checksum in range(0x00, 0x100):
                 package_bytes = base_packet + [test_checksum]
