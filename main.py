@@ -1639,6 +1639,25 @@ def main():
                             pump.serial.flush()
                             logger.info("📤 Sent *ETX")
                             print(f"\n✅ {packet_name}: SUCCESS!\n")
+
+                            # VERIFY WRITE - Read back the register to confirm
+                            print("🔍 Verifying write by reading back register 0x26...")
+                            time.sleep(2)  # Wait for write to complete
+                            pump.serial.reset_input_buffer()
+                            verify_value = pump.read_single_parameter(
+                                0x26, timeout=10.0
+                            )
+                            if verify_value is not None:
+                                print(f"   Read value: {verify_value}")
+                                if abs(verify_value - 1.0) < 0.1:
+                                    print("   ✅ WRITE VERIFIED! Value changed to 1!")
+                                else:
+                                    print(
+                                        f"   ⚠️  Value is still {verify_value}, write did NOT persist"
+                                    )
+                            else:
+                                print("   ⚠️  Could not read back value")
+
                             got_ack = True
                             break
                         elif first_byte == pump.pump.nak:
