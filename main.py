@@ -1481,19 +1481,47 @@ def main():
             print("\nWhich encoding to test?")
             print("1) Length=4, padded: C0 00 14 04 00 26 00 01 [csum] (2-byte value)")
             print("2) Length=3, direct:  C0 00 14 03 00 26 01 [csum] (1-byte value)")
-            print("3) Both")
+            print(
+                "3) 0x6B format:      C0 6B 14 06 26 00 01 00 00 00 [csum] (newer protocol)"
+            )
+            print("4) Length=4 + 0x03:  C0 03 14 04 00 26 00 01 [csum]")
+            print("5) Length=3 + 0x03:  C0 03 14 03 00 26 01 [csum]")
+            print("6) Length=4 + 0x06:  C0 06 14 04 00 26 00 01 [csum]")
+            print("7) Length=3 + 0x06:  C0 06 14 03 00 26 01 [csum]")
+            print("8) All")
 
-            test_choice = input("\nChoice [1/2/3]: ").strip() or "3"
+            test_choice = input("\nChoice [1/2/3/4/5/6/7/8]: ").strip() or "3"
 
             test_packets = []
-            if test_choice in ["1", "3"]:
+            if test_choice in ["1", "8"]:
                 base1 = [0xC0, 0x00, 0x14, 0x04, 0x00, 0x26, 0x00, 0x01]
                 csum1 = NibeProtocol.calc_checksum(base1)
-                test_packets.append(("Length=4 (padded)", base1 + [csum1]))
-            if test_choice in ["2", "3"]:
+                test_packets.append(("Length=4 (padded) + 0x00", base1 + [csum1]))
+            if test_choice in ["2", "8"]:
                 base2 = [0xC0, 0x00, 0x14, 0x03, 0x00, 0x26, 0x01]
                 csum2 = NibeProtocol.calc_checksum(base2)
-                test_packets.append(("Length=3 (direct)", base2 + [csum2]))
+                test_packets.append(("Length=3 (direct) + 0x00", base2 + [csum2]))
+            if test_choice in ["3", "8"]:
+                # 0x6B format from newer pumps: CMD_DATA, 0x6B, sender, 0x06, reg_low, reg_high, val[4 bytes]
+                base3 = [0xC0, 0x6B, 0x14, 0x06, 0x26, 0x00, 0x01, 0x00, 0x00, 0x00]
+                csum3 = NibeProtocol.calc_checksum(base3)
+                test_packets.append(("0x6B format (newer protocol)", base3 + [csum3]))
+            if test_choice in ["4", "8"]:
+                base4 = [0xC0, 0x03, 0x14, 0x04, 0x00, 0x26, 0x00, 0x01]
+                csum4 = NibeProtocol.calc_checksum(base4)
+                test_packets.append(("Length=4 (padded) + 0x03", base4 + [csum4]))
+            if test_choice in ["5", "8"]:
+                base5 = [0xC0, 0x03, 0x14, 0x03, 0x00, 0x26, 0x01]
+                csum5 = NibeProtocol.calc_checksum(base5)
+                test_packets.append(("Length=3 (direct) + 0x03", base5 + [csum5]))
+            if test_choice in ["6", "8"]:
+                base6 = [0xC0, 0x06, 0x14, 0x04, 0x00, 0x26, 0x00, 0x01]
+                csum6 = NibeProtocol.calc_checksum(base6)
+                test_packets.append(("Length=4 (padded) + 0x06", base6 + [csum6]))
+            if test_choice in ["7", "8"]:
+                base7 = [0xC0, 0x06, 0x14, 0x03, 0x00, 0x26, 0x01]
+                csum7 = NibeProtocol.calc_checksum(base7)
+                test_packets.append(("Length=3 (direct) + 0x06", base7 + [csum7]))
 
             for packet_name, package_bytes in test_packets:
                 print(f"\n{'=' * 60}")
