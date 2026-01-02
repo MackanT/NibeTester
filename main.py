@@ -339,19 +339,41 @@ class NibeHeatPump:
             print(f"  - Most common byte: 0x{max(set(buffer), key=buffer.count):02X}")
             print(f"  - Unique bytes: {len(set(buffer))}")
 
-            # Look for addressing pattern (0x00 followed by RCU address)
-            count_addressing = sum(
-                1
-                for i in range(len(buffer) - 1)
-                if buffer[i] == 0x00 and buffer[i + 1] == self.pump.rcu_addr
-            )
-            print(
-                f"  - Found '00 {self.pump.rcu_addr:02X}' (addressing) pattern: {count_addressing} times"
-            )
+            # Look for ALL addressing patterns (0x00 followed by device address)
+            print("\n📍 Addressing patterns found:")
+            addressing_patterns = {}
+            for i in range(len(buffer) - 1):
+                if buffer[i] == 0x00:
+                    device = buffer[i + 1]
+                    if device not in addressing_patterns:
+                        addressing_patterns[device] = []
+                    # Capture what comes BEFORE the addressing (up to 5 bytes)
+                    before = buffer[max(0, i - 5) : i]
+                    # Capture what comes AFTER (up to 10 bytes)
+                    after = buffer[i : min(len(buffer), i + 12)]
+                    addressing_patterns[device].append(
+                        {"before": before, "after": after, "position": i}
+                    )
+
+            for device, occurrences in sorted(addressing_patterns.items()):
+                device_name = {
+                    0x14: "RCU",
+                    0x24: "PUMP MASTER",
+                    0xF5: "RELAY",
+                    0xF9: "DISPLAY",
+                }.get(device, "UNKNOWN")
+                print(f"\n  0x{device:02X} ({device_name}): {len(occurrences)} times")
+                # Show first 3 examples
+                for idx, occ in enumerate(occurrences[:3]):
+                    print(
+                        f"    Example {idx + 1}: ...{occ['before'].hex(' ').upper()} | {occ['after'].hex(' ').upper()}..."
+                    )
 
             # Look for CMD_DATA (data packet start)
             count_cmd = buffer.count(self.pump.cmd_data)
-            print(f"  - Found '{self.pump.cmd_data:02X}' (CMD_DATA): {count_cmd} times")
+            print(
+                f"\n  - Found '{self.pump.cmd_data:02X}' (CMD_DATA): {count_cmd} times"
+            )
 
             # Show first 100 bytes in hex
             print("\n📝 First 100 bytes:")
