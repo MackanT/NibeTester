@@ -18,7 +18,7 @@ import yaml
 import sys
 
 FULL_LINE = 53
-TIMEOUT = 60
+TIMEOUT = 30
 
 # Setup logging
 logging.basicConfig(
@@ -1509,9 +1509,11 @@ def main():
                 if not pump_acked:
                     print("❌ Pump did not acknowledge ENQ")
                 else:
-                    # Send custom packet
+                    # Send custom packet for register 0x26 - TRY WITH LENGTH=4 (including checksum)
+                    # Packet: C0 00 14 04 00 26 01 F7
+                    # Register 0x26, value 1, size=1 byte, length=4 (includes checksum)
                     custom_packet = bytes(
-                        [0xC0, 0x00, 0x14, 0x03, 0x00, 0x26, 0x01, 0xF0]
+                        [0xC0, 0x00, 0x14, 0x04, 0x00, 0x26, 0x01, 0xF7]
                     )
                     logger.info(
                         f"📤 Sending custom packet: {custom_packet.hex(' ').upper()}"
