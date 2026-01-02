@@ -1509,6 +1509,10 @@ def main():
                 if not pump_acked:
                     print("❌ Pump did not acknowledge ENQ")
                 else:
+                    # FRESH START: Clear any residual data from previous attempts
+                    pump.serial.reset_input_buffer()
+                    logger.info("🧹 Cleared buffer before sending packet")
+
                     # Send custom packet for register 0x26 - TRY WITH LENGTH=4 (including checksum)
                     # Packet: C0 00 14 04 00 26 01 F7
                     # Register 0x26, value 1, size=1 byte, length=4 (includes checksum)
@@ -1520,43 +1524,42 @@ def main():
                     )
                     pump._send_with_space_parity(custom_packet)
 
-                    # Give pump 50ms to process and respond
-                    time.sleep(0.05)
+                    # Wait for pump response (should be immediate)
+                    logger.info("⏳ Waiting for pump response...")
+                    response_timeout = time.time() + 0.5  # 500ms timeout
 
-                    # Check buffer before clearing
-                    logger.info("⏳ Checking buffer 50ms after send...")
-                    logger.info(f"   Current parity: {pump.serial.parity}")
-                    bytes_before_clear = pump.serial.in_waiting
-                    logger.info(f"   Buffer BEFORE clear: {bytes_before_clear} bytes")
-
-                    # Read and log first byte (should be ACK/NAK)
-                    if bytes_before_clear > 0:
-                        first_byte = pump.serial.read(1)[0]
-                        logger.info(
-                            f"   🎯 First byte: 0x{first_byte:02X} (ACK=0x{pump.pump.ack:02X}, NAK=0x{pump.pump.nak:02X})"
-                        )
-
-                        if first_byte == pump.pump.ack:
-                            logger.info("✅ Pump sent ACK!")
-                            # Clear remaining bus traffic
-                            pump.serial.reset_input_buffer()
-                            # Send ETX
-                            pump.serial.parity = serial.PARITY_MARK
-                            pump.serial.write(bytes([pump.pump.etx]))
-                            pump.serial.flush()
-                            logger.info("📤 Sent *ETX")
-                            print("\n✅ Custom packet sent successfully!\n")
-                        elif first_byte == pump.pump.nak:
-                            logger.error("❌ Pump sent NAK")
-                            pump.serial.reset_input_buffer()
-                        else:
-                            logger.warning(
-                                f"   Unexpected first byte, continuing to wait..."
+                    while time.time() < response_timeout:
+                        if pump.serial.in_waiting > 0:
+                            first_byte = pump.serial.read(1)[0]
+                            logger.info(
+                                f"   🎯 Received: 0x{first_byte:02X} (ACK=0x{pump.pump.ack:02X}, NAK=0x{pump.pump.nak:02X})"
                             )
-                            # Don't clear, let normal loop handle it
+
+                            if first_byte == pump.pump.ack:
+                                logger.info("✅ Pump sent ACK!")
+                                # Clear any remaining bytes
+                                pump.serial.reset_input_buffer()
+                                # Send ETX
+                                pump.serial.parity = serial.PARITY_MARK
+                                pump.serial.write(bytes([pump.pump.etx]))
+                                pump.serial.flush()
+                                logger.info("📤 Sent *ETX")
+                                print("\n✅ Custom packet sent successfully!\n")
+                                break
+                            elif first_byte == pump.pump.nak:
+                                logger.error("❌ Pump sent NAK - checksum error")
+                                pump.serial.reset_input_buffer()
+                                break
+                            else:
+                                logger.warning(
+                                    f"   Unexpected byte 0x{first_byte:02X}, checking next..."
+                                )
+                                continue
+                        time.sleep(0.001)  # 1ms polling interval
                     else:
-                        logger.warning(
-                            "   No bytes received yet, continuing to wait..."
+                        logger.error("❌ Timeout waiting for ACK/NAK")
+                        logger.info(
+                            f"   Buffer at timeout: {pump.serial.in_waiting} bytes"
                         )
 
                     # Wait 0.15s more and check again
