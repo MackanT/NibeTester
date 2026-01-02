@@ -1514,11 +1514,11 @@ def main():
                     logger.info("🧹 Cleared buffer before sending packet")
 
                     # Send custom packet for register 0x26 (RCU förskjutning 1)
-                    # User confirms writable - real RCU modifies via RS-485
-                    # Packet: C0 00 14 03 00 26 01 F0 (value=1)
-                    # Register 0x26, value 1, size=1 byte, length=3 (payload only)
+                    # THEORY: Length=4 always for write commands (like the working 0x14 example)
+                    # Even though value is 1 byte, pad with 0x00 to match size=2 format
+                    # Packet: C0 00 14 04 00 26 00 01 F6 (value=1, padded as 0x0001)
                     custom_packet = bytes(
-                        [0xC0, 0x00, 0x14, 0x03, 0x00, 0x26, 0x01, 0xF0]
+                        [0xC0, 0x00, 0x14, 0x04, 0x00, 0x26, 0x00, 0x01, 0xF6]
                     )
                     logger.info(
                         f"📤 Sending custom packet: {custom_packet.hex(' ').upper()}"
