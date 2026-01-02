@@ -1629,16 +1629,17 @@ def main():
 
                 # Wait for pump response
                 logger.info("⏳ Waiting for pump response...")
-                logger.info("   Looking for ACK from PUMP MASTER (0x24)...")
-                response_timeout = (
-                    time.time() + 1.0
-                )  # Increased to 1 second to catch slow NAKs
+                logger.info("   Looking for ANY response (ACK/NAK/data)...")
+                response_timeout = time.time() + 1.5  # Increased to 1.5 seconds
                 got_ack = False
                 ack_source = None
+                all_bytes = []
 
                 while time.time() < response_timeout:
                     if pump.serial.in_waiting > 0:
                         first_byte = pump.serial.read(1)[0]
+                        all_bytes.append(first_byte)
+                        logger.info(f"   📥 Byte {len(all_bytes)}: 0x{first_byte:02X}")
 
                         # Check if this looks like addressing (00 followed by device address)
                         if first_byte == 0x00 and pump.serial.in_waiting > 0:
@@ -1688,6 +1689,14 @@ def main():
                             )
                             continue
                     time.sleep(0.001)
+
+                # Log all bytes received
+                if all_bytes:
+                    logger.info(
+                        f"   📊 All bytes received: {' '.join(f'{b:02X}' for b in all_bytes)}"
+                    )
+                else:
+                    logger.info("   📊 No bytes received from pump")
 
                 if got_ack:
                     # Send ETX
