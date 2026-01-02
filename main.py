@@ -1479,58 +1479,57 @@ def main():
             print("=" * FULL_LINE)
 
             print("\nWhich encoding to test?")
-            print("1) Length=4, padded: C0 00 14 04 00 26 00 01 [csum] (original)")
-            print("2) Length=3, direct:  C0 00 14 03 00 26 01 [csum]")
+            print("1) 0x00 + Len=4:     C0 00 14 04 00 26 00 01 [csum] (gets NAK)")
+            print("2) 0x00 + Len=3:     C0 00 14 03 00 26 01 [csum]")
+            print("3) No leading 00:    C0 00 14 03 26 00 01 [csum] (no 00 prefix)")
             print(
-                "3) 0x6B format:      C0 6B 14 06 26 00 01 00 00 00 [csum] (newer protocol)"
+                "4) Reg 0x14 test:    C0 00 14 04 00 14 01 45 [csum] (known working reg)"
             )
-            print("4) 0x01 + Length=4:  C0 01 14 04 00 26 00 01 [csum]")
-            print("5) 0x02 + Length=4:  C0 02 14 04 00 26 00 01 [csum]")
-            print("6) 0x03 + Length=4:  C0 03 14 04 00 26 00 01 [csum] (got NAK)")
-            print("7) 0x04 + Length=4:  C0 04 14 04 00 26 00 01 [csum]")
-            print("8) 0x05 + Length=4:  C0 05 14 04 00 26 00 01 [csum]")
-            print("9) 0x0B + Length=4:  C0 0B 14 04 00 26 00 01 [csum]")
-            print("0) Test all 0x01-0x0B")
+            print(
+                "5) Single byte val:  C0 00 14 02 00 26 01 [csum] (len=2, 1-byte value)"
+            )
+            print(
+                "6) Direct value:     C0 00 14 03 26 01 00 [csum] (reg 2-byte, val 1-byte)"
+            )
+            print("7) 0x6B format:      C0 6B 14 06 26 00 01 00 00 00 [csum]")
+            print("0) Test all")
 
-            test_choice = input("\nChoice [1-9/0]: ").strip() or "3"
+            test_choice = input("\nChoice [1-7/0]: ").strip() or "3"
 
             test_packets = []
             if test_choice in ["1", "0"]:
                 base1 = [0xC0, 0x00, 0x14, 0x04, 0x00, 0x26, 0x00, 0x01]
                 csum1 = NibeProtocol.calc_checksum(base1)
-                test_packets.append(("0x00 + Length=4 (original)", base1 + [csum1]))
-            if test_choice in ["2"]:
+                test_packets.append(("0x00 + Len=4 (gets NAK)", base1 + [csum1]))
+            if test_choice in ["2", "0"]:
                 base2 = [0xC0, 0x00, 0x14, 0x03, 0x00, 0x26, 0x01]
                 csum2 = NibeProtocol.calc_checksum(base2)
-                test_packets.append(("0x00 + Length=3", base2 + [csum2]))
-            if test_choice in ["3"]:
-                base3 = [0xC0, 0x6B, 0x14, 0x06, 0x26, 0x00, 0x01, 0x00, 0x00, 0x00]
+                test_packets.append(("0x00 + Len=3", base2 + [csum2]))
+            if test_choice in ["3", "0"]:
+                # Remove leading 00 from payload - maybe that's wrong?
+                base3 = [0xC0, 0x00, 0x14, 0x03, 0x26, 0x00, 0x01]
                 csum3 = NibeProtocol.calc_checksum(base3)
-                test_packets.append(("0x6B format (newer protocol)", base3 + [csum3]))
+                test_packets.append(("No leading 00 in payload", base3 + [csum3]))
             if test_choice in ["4", "0"]:
-                base4 = [0xC0, 0x01, 0x14, 0x04, 0x00, 0x26, 0x00, 0x01]
+                # Test with register 0x14 that we KNOW worked before
+                base4 = [0xC0, 0x00, 0x14, 0x04, 0x00, 0x14, 0x01, 0x45]
                 csum4 = NibeProtocol.calc_checksum(base4)
-                test_packets.append(("0x01 + Length=4", base4 + [csum4]))
+                test_packets.append(("Register 0x14 (known working)", base4 + [csum4]))
             if test_choice in ["5", "0"]:
-                base5 = [0xC0, 0x02, 0x14, 0x04, 0x00, 0x26, 0x00, 0x01]
+                # Length=2: just 00 + register + single value byte
+                base5 = [0xC0, 0x00, 0x14, 0x02, 0x00, 0x26, 0x01]
                 csum5 = NibeProtocol.calc_checksum(base5)
-                test_packets.append(("0x02 + Length=4", base5 + [csum5]))
+                test_packets.append(("Len=2 single byte value", base5 + [csum5]))
             if test_choice in ["6", "0"]:
-                base6 = [0xC0, 0x03, 0x14, 0x04, 0x00, 0x26, 0x00, 0x01]
+                # Register as 2 bytes (low+high), then 1-byte value
+                base6 = [0xC0, 0x00, 0x14, 0x03, 0x26, 0x01, 0x00]
                 csum6 = NibeProtocol.calc_checksum(base6)
-                test_packets.append(("0x03 + Length=4 (got NAK)", base6 + [csum6]))
+                test_packets.append(("Direct: reg 2-byte, val 1-byte", base6 + [csum6]))
             if test_choice in ["7", "0"]:
-                base7 = [0xC0, 0x04, 0x14, 0x04, 0x00, 0x26, 0x00, 0x01]
+                # 0x6B format from newer pumps
+                base7 = [0xC0, 0x6B, 0x14, 0x06, 0x26, 0x00, 0x01, 0x00, 0x00, 0x00]
                 csum7 = NibeProtocol.calc_checksum(base7)
-                test_packets.append(("0x04 + Length=4", base7 + [csum7]))
-            if test_choice in ["8", "0"]:
-                base8 = [0xC0, 0x05, 0x14, 0x04, 0x00, 0x26, 0x00, 0x01]
-                csum8 = NibeProtocol.calc_checksum(base8)
-                test_packets.append(("0x05 + Length=4", base8 + [csum8]))
-            if test_choice in ["9", "0"]:
-                base9 = [0xC0, 0x0B, 0x14, 0x04, 0x00, 0x26, 0x00, 0x01]
-                csum9 = NibeProtocol.calc_checksum(base9)
-                test_packets.append(("0x0B + Length=4", base9 + [csum9]))
+                test_packets.append(("0x6B format (newer protocol)", base7 + [csum7]))
 
             for packet_name, package_bytes in test_packets:
                 print(f"\n{'=' * 60}")
