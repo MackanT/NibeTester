@@ -1518,21 +1518,49 @@ def main():
                     )
                     pump._send_with_space_parity(custom_packet)
 
-                    # Check immediately
-                    logger.info("⏳ Checking buffer immediately after send...")
+                    # Give pump 50ms to process and respond
+                    time.sleep(0.05)
+
+                    # Check buffer before clearing
+                    logger.info("⏳ Checking buffer 50ms after send...")
                     logger.info(f"   Current parity: {pump.serial.parity}")
-                    logger.info(
-                        f"   Buffer BEFORE clear: {pump.serial.in_waiting} bytes"
-                    )
+                    bytes_before_clear = pump.serial.in_waiting
+                    logger.info(f"   Buffer BEFORE clear: {bytes_before_clear} bytes")
 
-                    # CRITICAL: Clear the buffer now to remove old bus traffic
-                    pump.serial.reset_input_buffer()
-                    logger.info("   🧹 Cleared buffer")
+                    # Read and log first byte (should be ACK/NAK)
+                    if bytes_before_clear > 0:
+                        first_byte = pump.serial.read(1)[0]
+                        logger.info(
+                            f"   🎯 First byte: 0x{first_byte:02X} (ACK=0x{pump.pump.ack:02X}, NAK=0x{pump.pump.nak:02X})"
+                        )
 
-                    # Wait 0.15s and check again
+                        if first_byte == pump.pump.ack:
+                            logger.info("✅ Pump sent ACK!")
+                            # Clear remaining bus traffic
+                            pump.serial.reset_input_buffer()
+                            # Send ETX
+                            pump.serial.parity = serial.PARITY_MARK
+                            pump.serial.write(bytes([pump.pump.etx]))
+                            pump.serial.flush()
+                            logger.info("📤 Sent *ETX")
+                            print("\n✅ Custom packet sent successfully!\n")
+                        elif first_byte == pump.pump.nak:
+                            logger.error("❌ Pump sent NAK")
+                            pump.serial.reset_input_buffer()
+                        else:
+                            logger.warning(
+                                f"   Unexpected first byte, continuing to wait..."
+                            )
+                            # Don't clear, let normal loop handle it
+                    else:
+                        logger.warning(
+                            "   No bytes received yet, continuing to wait..."
+                        )
+
+                    # Wait 0.15s more and check again
                     time.sleep(0.15)
                     logger.info(
-                        f"⏳ After 0.15s - Buffer: {pump.serial.in_waiting} bytes"
+                        f"⏳ After 0.2s total - Buffer: {pump.serial.in_waiting} bytes"
                     )
 
                     # Wait another 0.35s (total 0.5s) and check
