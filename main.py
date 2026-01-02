@@ -1492,49 +1492,79 @@ def main():
                 "6) Direct value:     C0 00 14 03 26 01 00 [csum] (reg 2-byte, val 1-byte)"
             )
             print("7) 0x6B format:      C0 6B 14 06 26 00 01 00 00 00 [csum]")
+            print("8) NO ENQ - Len=4:   Skip ENQ, send directly after addressing")
+            print("9) NO ENQ - Reg0x14: Skip ENQ with register 0x14")
             print("0) Test all")
 
-            test_choice = input("\nChoice [1-7/0]: ").strip() or "3"
+            test_choice = input("\nChoice [1-9/0]: ").strip() or "8"
 
             test_packets = []
             if test_choice in ["1", "0"]:
                 base1 = [0xC0, 0x00, 0x14, 0x04, 0x00, 0x26, 0x00, 0x01]
                 csum1 = NibeProtocol.calc_checksum(base1)
-                test_packets.append(("0x00 + Len=4 (gets NAK)", base1 + [csum1]))
+                test_packets.append(("0x00 + Len=4 (gets NAK)", base1 + [csum1], False))
             if test_choice in ["2", "0"]:
                 base2 = [0xC0, 0x00, 0x14, 0x03, 0x00, 0x26, 0x01]
                 csum2 = NibeProtocol.calc_checksum(base2)
-                test_packets.append(("0x00 + Len=3", base2 + [csum2]))
+                test_packets.append(("0x00 + Len=3", base2 + [csum2], False))
             if test_choice in ["3", "0"]:
                 # Remove leading 00 from payload - maybe that's wrong?
                 base3 = [0xC0, 0x00, 0x14, 0x03, 0x26, 0x00, 0x01]
                 csum3 = NibeProtocol.calc_checksum(base3)
-                test_packets.append(("No leading 00 in payload", base3 + [csum3]))
+                test_packets.append(
+                    ("No leading 00 in payload", base3 + [csum3], False)
+                )
             if test_choice in ["4", "0"]:
                 # Test with register 0x14 that we KNOW worked before
                 base4 = [0xC0, 0x00, 0x14, 0x04, 0x00, 0x14, 0x01, 0x45]
                 csum4 = NibeProtocol.calc_checksum(base4)
-                test_packets.append(("Register 0x14 (known working)", base4 + [csum4]))
+                test_packets.append(
+                    ("Register 0x14 (known working)", base4 + [csum4], False)
+                )
             if test_choice in ["5", "0"]:
                 # Length=2: just 00 + register + single value byte
                 base5 = [0xC0, 0x00, 0x14, 0x02, 0x00, 0x26, 0x01]
                 csum5 = NibeProtocol.calc_checksum(base5)
-                test_packets.append(("Len=2 single byte value", base5 + [csum5]))
+                test_packets.append(("Len=2 single byte value", base5 + [csum5], False))
             if test_choice in ["6", "0"]:
                 # Register as 2 bytes (low+high), then 1-byte value
                 base6 = [0xC0, 0x00, 0x14, 0x03, 0x26, 0x01, 0x00]
                 csum6 = NibeProtocol.calc_checksum(base6)
-                test_packets.append(("Direct: reg 2-byte, val 1-byte", base6 + [csum6]))
+                test_packets.append(
+                    ("Direct: reg 2-byte, val 1-byte", base6 + [csum6], False)
+                )
             if test_choice in ["7", "0"]:
                 # 0x6B format from newer pumps
                 base7 = [0xC0, 0x6B, 0x14, 0x06, 0x26, 0x00, 0x01, 0x00, 0x00, 0x00]
                 csum7 = NibeProtocol.calc_checksum(base7)
-                test_packets.append(("0x6B format (newer protocol)", base7 + [csum7]))
+                test_packets.append(
+                    ("0x6B format (newer protocol)", base7 + [csum7], False)
+                )
+            if test_choice in ["8", "0"]:
+                # NO ENQ - send packet directly after addressing (like 2007 forum)
+                base8 = [0xC0, 0x00, 0x14, 0x04, 0x00, 0x26, 0x00, 0x01]
+                csum8 = NibeProtocol.calc_checksum(base8)
+                test_packets.append(
+                    ("NO ENQ - Direct send after addressing", base8 + [csum8], True)
+                )
+            if test_choice in ["9", "0"]:
+                # NO ENQ with register 0x14
+                base9 = [0xC0, 0x00, 0x14, 0x04, 0x00, 0x14, 0x01, 0x45]
+                csum9 = NibeProtocol.calc_checksum(base9)
+                test_packets.append(("NO ENQ - Register 0x14", base9 + [csum9], True))
 
-            for packet_name, package_bytes in test_packets:
+            for item in test_packets:
+                if len(item) == 3:
+                    packet_name, package_bytes, skip_enq = item
+                else:
+                    packet_name, package_bytes = item
+                    skip_enq = False
+
                 print(f"\n{'=' * 60}")
                 print(f"Testing: {packet_name}")
                 print(f"Packet: {bytes(package_bytes).hex(' ').upper()}")
+                if skip_enq:
+                    print("⚠️  SKIPPING ENQ - sending directly after addressing")
                 print(f"{'=' * 60}\n")
                 time.sleep(1)
 
@@ -1546,28 +1576,33 @@ def main():
                 # Clear buffer
                 pump.serial.reset_input_buffer()
 
-                # Send ENQ
-                logger.info("📤 Sending ENQ (write request)...")
-                pump._send_with_space_parity(bytes([pump.pump.enq]))
-                time.sleep(0.05)
+                # Send ENQ (unless skipping)
+                if not skip_enq:
+                    logger.info("📤 Sending ENQ (write request)...")
+                    pump._send_with_space_parity(bytes([pump.pump.enq]))
+                    time.sleep(0.05)
 
-                # Wait for ACK from pump
-                logger.info("⏳ Waiting for pump ACK...")
-                ack_start = time.time()
-                pump_acked = False
-                while time.time() - ack_start < 2.0:
-                    if pump.serial.in_waiting > 0:
-                        byte = pump.serial.read(1)
-                        logger.info(f"   Received byte: 0x{byte[0]:02X}")
-                        if byte[0] == pump.pump.ack:
-                            logger.info("✅ Pump acknowledged write request")
-                            pump_acked = True
-                            break
+                    # Wait for ACK from pump
+                    logger.info("⏳ Waiting for pump ACK...")
+                    ack_start = time.time()
+                    pump_acked = False
+                    while time.time() - ack_start < 2.0:
+                        if pump.serial.in_waiting > 0:
+                            byte = pump.serial.read(1)
+                            logger.info(f"   Received byte: 0x{byte[0]:02X}")
+                            if byte[0] == pump.pump.ack:
+                                logger.info("✅ Pump acknowledged write request")
+                                pump_acked = True
+                                break
+                        time.sleep(0.01)
+
+                    if not pump_acked:
+                        print(f"❌ {packet_name}: Pump did not acknowledge ENQ\n")
+                        continue
+                else:
+                    logger.info("⚠️  SKIPPING ENQ - sending packet directly")
+                    pump_acked = True  # Skip the check
                     time.sleep(0.01)
-
-                if not pump_acked:
-                    print(f"❌ {packet_name}: Pump did not acknowledge ENQ\n")
-                    continue
 
                 # Clear buffer before sending packet
                 pump.serial.reset_input_buffer()
