@@ -1521,7 +1521,13 @@ def main():
                     # Check immediately
                     logger.info("⏳ Checking buffer immediately after send...")
                     logger.info(f"   Current parity: {pump.serial.parity}")
-                    logger.info(f"   Buffer: {pump.serial.in_waiting} bytes")
+                    logger.info(
+                        f"   Buffer BEFORE clear: {pump.serial.in_waiting} bytes"
+                    )
+
+                    # CRITICAL: Clear the buffer now to remove old bus traffic
+                    pump.serial.reset_input_buffer()
+                    logger.info("   🧹 Cleared buffer")
 
                     # Wait 0.15s and check again
                     time.sleep(0.15)
