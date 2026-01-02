@@ -385,7 +385,9 @@ class NibeHeatPump:
 
         return buffer
 
-    def _wait_for_addressing(self, timeout: float = 5.0, verbose: bool = True) -> bool:
+    def _wait_for_addressing(
+        self, timeout: float = 5.0, verbose: bool = True, wait_for_enq: bool = False
+    ) -> bool:
         """
         Wait for the pump to address us (0x00 0x14)
         Returns True if addressed, False if timeout
@@ -393,9 +395,15 @@ class NibeHeatPump:
         Args:
             timeout: Maximum time to wait
             verbose: If False, reduce debug logging (useful during write retries)
+            wait_for_enq: If True, wait specifically for ENQ addressing (05 00 14) for writes
         """
         if verbose:
-            logger.debug("⏳ Waiting for pump to address RCU (0x00 0x14)...")
+            if wait_for_enq:
+                logger.debug(
+                    "⏳ Waiting for pump to send ENQ + address RCU (05 00 14) for WRITE..."
+                )
+            else:
+                logger.debug("⏳ Waiting for pump to address RCU (0x00 0x14)...")
         start_time = time.time()
         buffer = bytearray()
 
@@ -406,8 +414,18 @@ class NibeHeatPump:
                 if verbose:
                     logger.debug(f"Received byte: {byte.hex().upper()}")
 
-                # Look for addressing sequence
-                if len(buffer) >= 2:
+                # Look for ENQ addressing sequence (05 00 14) for writes
+                if wait_for_enq and len(buffer) >= 3:
+                    if (
+                        buffer[-3] == self.pump.enq
+                        and buffer[-2] == 0x00
+                        and buffer[-1] == self.pump.rcu_addr
+                    ):
+                        logger.info("✅ RCU addressed by pump with ENQ (write mode)!")
+                        return True
+
+                # Look for regular addressing sequence (00 14) for reads
+                if not wait_for_enq and len(buffer) >= 2:
                     if buffer[-2] == 0x00 and buffer[-1] == self.pump.rcu_addr:
                         logger.info("✅ RCU addressed by pump!")
                         return True
@@ -1501,98 +1519,70 @@ def main():
             print("=" * FULL_LINE)
 
             print("\nWhich encoding to test?")
-            print("1) 0x00 + Len=4:     C0 00 14 04 00 26 00 01 [csum] (gets NAK)")
-            print("2) 0x00 + Len=3:     C0 00 14 03 00 26 01 [csum]")
-            print("3) No leading 00:    C0 00 14 03 26 00 01 [csum] (no 00 prefix)")
             print(
-                "4) Reg 0x14 test:    C0 00 14 04 00 14 01 45 [csum] (known working reg)"
+                "1) With ENQ + Len=4:      Normal ENQ, C0 00 14 04 00 26 00 01 (gets NAK)"
             )
             print(
-                "5) Single byte val:  C0 00 14 02 00 26 01 [csum] (len=2, 1-byte value)"
+                "2) With ENQ + Len=3:      Normal ENQ, C0 00 14 03 00 26 01 (no padding)"
             )
             print(
-                "6) Direct value:     C0 00 14 03 26 01 00 [csum] (reg 2-byte, val 1-byte)"
+                "3) With ENQ + No 00:      Normal ENQ, C0 00 14 03 26 00 01 (no leading 00)"
             )
-            print("7) 0x6B format:      C0 6B 14 06 26 00 01 00 00 00 [csum]")
-            print("8) NO ENQ - Len=4:   Skip ENQ, send directly after addressing")
-            print("9) NO ENQ - Reg0x14: Skip ENQ with register 0x14")
-            print("0) Test all")
+            print("4) Without ENQ:           Skip ENQ, C0 00 14 04 00 26 00 01")
 
-            test_choice = input("\nChoice [1-9/0]: ").strip() or "8"
+            test_choice = input("\nChoice [1-4]: ").strip() or "1"
 
             test_packets = []
-            if test_choice in ["1", "0"]:
+
+            if test_choice == "1":
                 base1 = [0xC0, 0x00, 0x14, 0x04, 0x00, 0x26, 0x00, 0x01]
                 csum1 = NibeProtocol.calc_checksum(base1)
-                test_packets.append(("0x00 + Len=4 (gets NAK)", base1 + [csum1], False))
-            if test_choice in ["2", "0"]:
+                test_packets.append(("With ENQ + Len=4", base1 + [csum1], False, False))
+            elif test_choice == "2":
                 base2 = [0xC0, 0x00, 0x14, 0x03, 0x00, 0x26, 0x01]
                 csum2 = NibeProtocol.calc_checksum(base2)
-                test_packets.append(("0x00 + Len=3", base2 + [csum2], False))
-            if test_choice in ["3", "0"]:
-                # Remove leading 00 from payload - maybe that's wrong?
+                test_packets.append(
+                    ("With ENQ + Len=3 (no padding)", base2 + [csum2], False, False)
+                )
+            elif test_choice == "3":
                 base3 = [0xC0, 0x00, 0x14, 0x03, 0x26, 0x00, 0x01]
                 csum3 = NibeProtocol.calc_checksum(base3)
                 test_packets.append(
-                    ("No leading 00 in payload", base3 + [csum3], False)
+                    ("With ENQ + No leading 00", base3 + [csum3], False, False)
                 )
-            if test_choice in ["4", "0"]:
-                # Test with register 0x14 that we KNOW worked before
-                base4 = [0xC0, 0x00, 0x14, 0x04, 0x00, 0x14, 0x01, 0x45]
+            elif test_choice == "4":
+                base4 = [0xC0, 0x00, 0x14, 0x04, 0x00, 0x26, 0x00, 0x01]
                 csum4 = NibeProtocol.calc_checksum(base4)
-                test_packets.append(
-                    ("Register 0x14 (known working)", base4 + [csum4], False)
-                )
-            if test_choice in ["5", "0"]:
-                # Length=2: just 00 + register + single value byte
-                base5 = [0xC0, 0x00, 0x14, 0x02, 0x00, 0x26, 0x01]
-                csum5 = NibeProtocol.calc_checksum(base5)
-                test_packets.append(("Len=2 single byte value", base5 + [csum5], False))
-            if test_choice in ["6", "0"]:
-                # Register as 2 bytes (low+high), then 1-byte value
-                base6 = [0xC0, 0x00, 0x14, 0x03, 0x26, 0x01, 0x00]
-                csum6 = NibeProtocol.calc_checksum(base6)
-                test_packets.append(
-                    ("Direct: reg 2-byte, val 1-byte", base6 + [csum6], False)
-                )
-            if test_choice in ["7", "0"]:
-                # 0x6B format from newer pumps
-                base7 = [0xC0, 0x6B, 0x14, 0x06, 0x26, 0x00, 0x01, 0x00, 0x00, 0x00]
-                csum7 = NibeProtocol.calc_checksum(base7)
-                test_packets.append(
-                    ("0x6B format (newer protocol)", base7 + [csum7], False)
-                )
-            if test_choice in ["8", "0"]:
-                # NO ENQ - send packet directly after addressing (like 2007 forum)
-                base8 = [0xC0, 0x00, 0x14, 0x04, 0x00, 0x26, 0x00, 0x01]
-                csum8 = NibeProtocol.calc_checksum(base8)
-                test_packets.append(
-                    ("NO ENQ - Direct send after addressing", base8 + [csum8], True)
-                )
-            if test_choice in ["9", "0"]:
-                # NO ENQ with register 0x14
-                base9 = [0xC0, 0x00, 0x14, 0x04, 0x00, 0x14, 0x01, 0x45]
-                csum9 = NibeProtocol.calc_checksum(base9)
-                test_packets.append(("NO ENQ - Register 0x14", base9 + [csum9], True))
+                test_packets.append(("Without ENQ", base4 + [csum4], True, False))
 
             for item in test_packets:
-                if len(item) == 3:
-                    packet_name, package_bytes, skip_enq = item
+                if len(item) == 4:
+                    packet_name, package_bytes, skip_enq, wait_enq = item
                 else:
-                    packet_name, package_bytes = item
-                    skip_enq = False
+                    # Old format compatibility
+                    packet_name, package_bytes = item[:2]
+                    skip_enq = item[2] if len(item) > 2 else False
+                    wait_enq = False
 
                 print(f"\n{'=' * 60}")
                 print(f"Testing: {packet_name}")
                 print(f"Packet: {bytes(package_bytes).hex(' ').upper()}")
                 if skip_enq:
                     print("⚠️  SKIPPING ENQ - sending directly after addressing")
+                if wait_enq:
+                    print("⚠️  WAITING FOR ENQ ADDRESSING (05 00 14) from pump")
                 print(f"{'=' * 60}\n")
                 time.sleep(1)
 
                 # Wait for pump to address us
-                if not pump._wait_for_addressing(timeout=5.0):
-                    print(f"❌ {packet_name}: Pump did not address RCU\n")
+                if not pump._wait_for_addressing(timeout=30.0, wait_for_enq=wait_enq):
+                    if wait_enq:
+                        print(
+                            f"❌ {packet_name}: Pump did not send ENQ addressing (05 00 14)\n"
+                        )
+                        print("   Pump only sends regular addressing (03 00 14)")
+                    else:
+                        print(f"❌ {packet_name}: Pump did not address RCU\n")
                     continue
 
                 # Clear buffer
