@@ -1477,7 +1477,8 @@ def main():
             print("\n" + "=" * FULL_LINE)
             print("  SEND CUSTOM PACKET")
             print("=" * FULL_LINE)
-            print("\nSending test packet: C0 00 14 03 00 1E 26 EF\n")
+            package_bytes = [0xC0, 0x00, 0x14, 0x04, 0x00, 0x26, 0x00, 0x01, 0xF7]
+            print(f"\nSending test packet: {package_bytes}\n")
             time.sleep(1)
 
             # Wait for pump to address us
@@ -1517,9 +1518,7 @@ def main():
                     # THEORY: Length=4 always for write commands (like the working 0x14 example)
                     # Even though value is 1 byte, pad with 0x00 to match size=2 format
                     # Packet: C0 00 14 04 00 26 00 01 F6 (value=1, padded as 0x0001)
-                    custom_packet = bytes(
-                        [0xC0, 0x00, 0x14, 0x04, 0x00, 0x26, 0x00, 0x01, 0xF7]
-                    )
+                    custom_packet = bytes(package_bytes)
                     logger.info(
                         f"📤 Sending custom packet: {custom_packet.hex(' ').upper()}"
                     )
