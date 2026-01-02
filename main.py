@@ -1478,13 +1478,19 @@ def main():
             print("  SEND CUSTOM PACKET - BRUTE FORCE CHECKSUM")
             print("=" * FULL_LINE)
 
-            # Base packet WITHOUT checksum - size=1 register, send 1 byte only
-            base_packet = [0xC0, 0x00, 0x14, 0x03, 0x00, 0x26, 0x01]
+            # Base packet WITHOUT checksum - use length=4 (padding size=1 to 2 bytes)
+            # Forum example: C0 00 14 04 00 14 01 45 worked (2-byte value)
+            # So for 1-byte: pad with leading 0x00 to make it 2 bytes
+            base_packet = [0xC0, 0x00, 0x14, 0x04, 0x00, 0x26, 0x00, 0x01]
 
             # Calculate what we THINK the checksum should be
             calculated_checksum = NibeProtocol.calc_checksum(base_packet)
             print(f"\nBase packet: {bytes(base_packet).hex(' ').upper()}")
-            print(f"Register 0x26 (size=1), value=1, length=3 (1 byte value)")
+            print(f"Register 0x26 (size=1), value=1, length=4 (padded to 2 bytes)")
+            print(f"Calculated checksum: 0x{calculated_checksum:02X}")
+            print(f"\nTrying all 256 possible checksums until ACK...\n")
+            time.sleep(1)
+
             # Try all possible checksums
             for test_checksum in range(0x00, 0x100):
                 package_bytes = base_packet + [test_checksum]
@@ -1526,7 +1532,7 @@ def main():
                 pump._send_with_space_parity(custom_packet)
 
                 # Wait for pump response (ACK/NAK)
-                response_timeout = time.time() + 0.5
+                response_timeout = time.time() + 1.0  # Increased to 1 second
                 got_response = False
 
                 while time.time() < response_timeout:
@@ -1547,11 +1553,12 @@ def main():
                             got_response = True
                             break
                         elif first_byte == pump.pump.nak:
-                            print("❌ NAK")
+                            print(f"❌ NAK (bad checksum)")
                             got_response = True
                             break
                         else:
-                            # Unexpected byte, keep checking
+                            # Unexpected byte - log it but keep checking
+                            print(f"   Got 0x{first_byte:02X}, ", end="", flush=True)
                             continue
                     time.sleep(0.001)
 
@@ -1560,11 +1567,12 @@ def main():
                     break
 
                 if not got_response:
-                    print("⏱️ Timeout")
+                    # Check if there were ANY bytes
+                    bytes_in_buffer = pump.serial.in_waiting
+                    print(f"⏱️ Timeout (buffer: {bytes_in_buffer} bytes)")
 
                 # Small delay before next attempt
-                time.sleep(0.1)
-
+                time.sleep(0.2)
     except KeyboardInterrupt:
         print("\n\n⚠️ Interrupted by user")
 
