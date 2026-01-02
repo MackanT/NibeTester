@@ -18,7 +18,7 @@ import yaml
 import sys
 
 FULL_LINE = 53
-TIMEOUT = 30
+TIMEOUT = 60  # seconds
 
 # Setup logging
 logging.basicConfig(
@@ -1227,8 +1227,8 @@ def main():
     print("Options:")
     print("  1) Read parameters (normal operation)")
     print("  2) Read single parameter")
-    print("  3) Write parameter value")
-    print("  4) Send custom packet (testing)")
+    print("  3) Write parameter value (disabled)")
+    print("  4) Send test package (disabled)")
     print("  9) Capture bus traffic (diagnostic mode)")
     print("")
 
@@ -1418,6 +1418,9 @@ def main():
 
         # Write parameter
         if choice == "3":
+            print("Feature disabled! Ending code")
+            return
+
             print("\n" + "=" * FULL_LINE)
             print("  WRITE PARAMETER")
             print("=" * FULL_LINE)
@@ -1514,6 +1517,9 @@ def main():
 
         # Send custom packet
         if choice == "4":
+            print("Feature disabled! Ending code")
+            return
+
             print("\n" + "=" * FULL_LINE)
             print("  SEND CUSTOM PACKET - TEST BOTH ENCODINGS")
             print("=" * FULL_LINE)
