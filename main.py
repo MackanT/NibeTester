@@ -1612,14 +1612,25 @@ def main():
 
                 # Additional checks
                 time.sleep(0.15)
-                logger.info(
-                    f"⏳ After 0.2s total - Buffer: {pump.serial.in_waiting} bytes"
-                )
+                buffer_count = pump.serial.in_waiting
+                logger.info(f"⏳ After 0.2s total - Buffer: {buffer_count} bytes")
+
+                if buffer_count > 0:
+                    buffered_bytes = pump.serial.read(buffer_count)
+                    logger.info(
+                        f"   📦 Buffer contents: {buffered_bytes.hex(' ').upper()}"
+                    )
+                    logger.info(f"   📦 As decimal: {[b for b in buffered_bytes]}")
 
                 time.sleep(0.35)
-                logger.info(
-                    f"⏳ After 0.5s total - Buffer: {pump.serial.in_waiting} bytes"
-                )
+                buffer_count2 = pump.serial.in_waiting
+                logger.info(f"⏳ After 0.5s total - Buffer: {buffer_count2} bytes")
+
+                if buffer_count2 > 0:
+                    buffered_bytes2 = pump.serial.read(buffer_count2)
+                    logger.info(
+                        f"   📦 Additional buffer contents: {buffered_bytes2.hex(' ').upper()}"
+                    )
 
                 print(f"\n{'=' * 60}\n")
 
