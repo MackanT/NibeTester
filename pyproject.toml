@@ -5,7 +5,9 @@ description = "Python RS-485 serial communication for Nibe 360P heat pump"
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
+    "psycopg2-binary>=2.9.10",
     "pyserial>=3.5",
+    "pyyaml>=6.0.3",
 ]
 
 [project.optional-dependencies]
