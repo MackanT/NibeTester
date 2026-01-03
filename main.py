@@ -24,7 +24,7 @@ import psycopg2
 from psycopg2 import sql
 
 FULL_LINE = 53
-TIMEOUT = 60  # seconds (1 minute)
+TIMEOUT = 300  # seconds (5 minutes)
 
 # Setup logging
 logging.basicConfig(
