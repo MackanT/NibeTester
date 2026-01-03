@@ -748,7 +748,7 @@ def _create_table_if_not_exists(cursor, table_name: str) -> None:
 
 def _setup_db(cursor) -> None:
     """Setup all required database tables"""
-    tables = ["temperatures", "alarms", "pump"]
+    tables = ["temperatures", "alarms", "pump", "time", "power"]
     for table in tables:
         _create_table_if_not_exists(cursor, table)
 
@@ -848,13 +848,6 @@ def main():
             print("=" * 70)
             print()
 
-            # Save results to file for later PostgreSQL import
-            # filename = pump.save_results()
-            # print(f"💾 Results saved to: {filename}")
-            # print("   Use NibeHeatPump.load_results(filename) to load data later.")
-            # print("=" * 70)
-            # print()
-
             conn, cursor = _connect_db("password.txt")
             print("📡 Connected to PostgreSQL database.")
             _setup_db(cursor)
@@ -886,6 +879,12 @@ def main():
                 elif register in ["0x1B", "0x1C", "0x1D", "0x26"]:
                     # Kompressorstarter, drifttid, elpatron, RCU-läge
                     _write_db("pump", register, name, value, cursor)
+                elif register in ["0x29", "0x2A", "0x2B", "0x2C", "0x2D", "0x2E"]:
+                    # Tid och datum
+                    _write_db("time", register, name, value, cursor)
+                elif register in ["0x17", "0x18", "0x19", "0x14"]:
+                    # Effektdata
+                    _write_db("power", register, name, value, cursor)
 
                 else:
                     print("Ignoring register:", register, name)
