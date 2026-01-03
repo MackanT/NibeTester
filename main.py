@@ -471,6 +471,7 @@ class NibeHeatPump:
                     "value": value,
                     "unit": param.unit,
                     "register": f"0x{param_idx:02X}",
+                    "type": "parameter",
                 }
 
         # Add bit fields
@@ -494,6 +495,7 @@ class NibeHeatPump:
 
                         result_key = f"{field_name} ({register_hex})"
                         self.all_results[result_key] = {
+                            "name": field_name,
                             "value": value,
                             "display_value": display_value,
                             "unit": bit_field.unit,
