@@ -762,10 +762,13 @@ def _write_db(table_name: str, register: str, name: str, value: float, cursor) -
     )
 
 
-def main():
-    """Main program - automatically collects all data on startup"""
+def print_header(header: str) -> None:
+    print("\n" + "=" * FULL_LINE)
+    print(f"  {header}")
+    print("=" * FULL_LINE + "\n")
 
-    pump_model = "nibe_360P"
+
+def setup_serial(pump_model: str) -> None:
     NIBE_PARAMETERS, PUMP = load_from_yaml("pumps.yaml", pump_model)
 
     if sys.platform.startswith("win"):
@@ -779,20 +782,24 @@ def main():
         f"✅ Code detected environment: {system_name}, using {SERIAL_PORT} as default serial port."
     )
 
-    print("")
-    print("=" * FULL_LINE)
-    print(f"  {PUMP.name} Heat Pump Reader")
-    print("=" * FULL_LINE)
-    print("")
-    print(f"Serial Port: {SERIAL_PORT}")
-    print(
-        f"Baudrate: {PUMP.baudrate} baud, {PUMP.bit_mode}-bit mode ({PUMP.parity} parity)"
-    )
-    print("")
-    print("Starting automatic data collection...")
-    print("")
-
     pump = NibeHeatPump(SERIAL_PORT, parameters=NIBE_PARAMETERS, pump_info=PUMP)
+
+    print_header(f"{PUMP.name} Heat Pump Reader")
+    print(f"Serial Port: {SERIAL_PORT}")
+    print(f"""
+          Baudrate: {PUMP.baudrate} baud
+          {PUMP.bit_mode}-bit mode 
+          {PUMP.parity} parity
+          """)
+    print("\nStarting automatic data collection...\n")
+
+    return pump
+
+
+def main(pump_model: str = "nibe_360P") -> None:
+    """Main program - automatically collects all data on startup"""
+
+    pump = setup_serial(pump_model)
 
     if not pump.connect():
         logger.error("❌ Failed to connect!")
@@ -820,10 +827,7 @@ def main():
         results = pump.read_all_parameters(timeout=TIMEOUT)
 
         if results:
-            print("\n" + "=" * 70)
-            print(f"  SUCCESS! Captured {len(results)} fields:")
-            print("=" * 70)
-            print()
+            print_header("SUCCESS! Captured {len(results)} fields:")
 
             # Display results sorted by register
             sorted_results = sorted(
@@ -842,11 +846,7 @@ def main():
                         f"      [{data['register']}] {key:.<41} {display:>8} {data['unit']:<5}"
                     )
 
-            print()
-            print("=" * 70)
-            print("Data collection complete!")
-            print("=" * 70)
-            print()
+            print_header("Data collection complete!")
 
             conn, cursor = _connect_db("password.txt")
             print("📡 Connected to PostgreSQL database.")
