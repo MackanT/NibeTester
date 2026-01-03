@@ -17,6 +17,8 @@ from dataclasses import dataclass
 import logging
 import yaml
 import sys
+import json
+from datetime import datetime
 
 FULL_LINE = 53
 TIMEOUT = 60  # seconds (1 minute)
@@ -504,6 +506,41 @@ class NibeHeatPump:
         """Get all collected results (for PostgreSQL export)"""
         return self.all_results
 
+    def save_results(self, filename: str = None) -> str:
+        """Save results to JSON file
+
+        Args:
+            filename: Optional filename. If not provided, uses timestamp.
+
+        Returns:
+            The filename that was written to
+        """
+        if filename is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"pump_data_{timestamp}.json"
+
+        with open(filename, "w", encoding="utf-8") as f:
+            json.dump(self.all_results, f, indent=2, ensure_ascii=False)
+
+        logger.info(f"✅ Results saved to {filename}")
+        return filename
+
+    @staticmethod
+    def load_results(filename: str) -> Dict[str, any]:
+        """Load results from JSON file
+
+        Args:
+            filename: Path to JSON file
+
+        Returns:
+            Dictionary with pump data
+        """
+        with open(filename, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        logger.info(f"✅ Results loaded from {filename}")
+        return data
+
 
 def load_from_yaml(file_path: str, pump_name: str) -> Tuple[List[Register], Pump]:
     """Load register definitions from a YAML file
@@ -757,13 +794,15 @@ def main():
             print()
             print("=" * 70)
             print("Data collection complete!")
-            print("Results stored in memory and ready for database export.")
             print("=" * 70)
             print()
 
-            # Example: Access the results dict for PostgreSQL export
-            # all_data = pump.get_results()
-            # TODO: Add PostgreSQL export here
+            # Save results to file for later PostgreSQL import
+            filename = pump.save_results()
+            print(f"💾 Results saved to: {filename}")
+            print("   Use NibeHeatPump.load_results(filename) to load data later.")
+            print("=" * 70)
+            print()
 
         else:
             print("\n❌ No parameters received!")
