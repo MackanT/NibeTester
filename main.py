@@ -20,6 +20,9 @@ import sys
 import json
 from datetime import datetime
 
+import psycopg2
+from psycopg2 import sql
+
 FULL_LINE = 53
 TIMEOUT = 60  # seconds (1 minute)
 
@@ -713,6 +716,52 @@ def load_from_yaml(file_path: str, pump_name: str) -> Tuple[List[Register], Pump
     return registers, pump
 
 
+def _connect_db(
+    pwd_file_name: str,
+) -> Tuple[psycopg2.extensions.connection, psycopg2.extensions.cursor]:
+    with open(pwd_file_name, "r") as f:
+        pwd = f.readline()
+
+    pwd = pwd.strip()
+
+    conn = psycopg2.connect(
+        host="192.168.1.177", database="sensor_data", user="admin", password=pwd
+    )
+    cursor = conn.cursor()
+    return conn, cursor
+
+
+def _create_table_if_not_exists(cursor, table_name: str) -> None:
+    """Create a sensor data table with standard structure if it doesn't exist"""
+    cursor.execute(
+        sql.SQL("""
+            create table if not exists {} (
+                 id serial primary key
+                ,timestamp timestamp default now()
+                ,register text
+                ,name text
+                ,value real
+            )
+        """).format(sql.Identifier(table_name))
+    )
+
+
+def _setup_db(cursor) -> None:
+    """Setup all required database tables"""
+    tables = ["temperatures", "alarms", "pump"]
+    for table in tables:
+        _create_table_if_not_exists(cursor, table)
+
+
+def _write_db(table_name: str, register: str, name: str, value: float, cursor) -> None:
+    cursor.execute(
+        sql.SQL("insert into {} (register, name, value) values (%s, %s, %s)").format(
+            sql.Identifier(table_name)
+        ),
+        (register, name, value),
+    )
+
+
 def main():
     """Main program - automatically collects all data on startup"""
 
@@ -800,11 +849,50 @@ def main():
             print()
 
             # Save results to file for later PostgreSQL import
-            filename = pump.save_results()
-            print(f"💾 Results saved to: {filename}")
-            print("   Use NibeHeatPump.load_results(filename) to load data later.")
-            print("=" * 70)
-            print()
+            # filename = pump.save_results()
+            # print(f"💾 Results saved to: {filename}")
+            # print("   Use NibeHeatPump.load_results(filename) to load data later.")
+            # print("=" * 70)
+            # print()
+
+            conn, cursor = _connect_db("password.txt")
+            print("📡 Connected to PostgreSQL database.")
+            _setup_db(cursor)
+            print("🗄️  Database tables verified/created.")
+
+            for item in pump.all_results.values():
+                register = item["register"]
+                value = item["value"]
+                name = item["name"]
+
+                if register in [
+                    "0x01",
+                    "0x02",
+                    "0x03",
+                    "0x04",
+                    "0x05",
+                    "0x06",
+                    "0x07",
+                    "0x08",
+                    "0x09",
+                    "0x0D",
+                ]:
+                    # Temperaturer
+                    _write_db("temperatures", register, name, value, cursor)
+                elif register in ["0x16"]:
+                    if value != 0:
+                        # Larm
+                        _write_db("alarms", register, name, value, cursor)
+                elif register in ["0x1B", "0x1C", "0x1D", "0x26"]:
+                    # Kompressorstarter, drifttid, elpatron, RCU-läge
+                    _write_db("pump", register, name, value, cursor)
+
+                else:
+                    print("Ignoring register:", register, name)
+                    continue
+
+            conn.commit()
+            conn.close()
 
         else:
             print("\n❌ No parameters received!")
