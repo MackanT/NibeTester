@@ -467,10 +467,10 @@ class NibeHeatPump:
                 param = self.parameters[param_idx]
                 key = f"{param.name} (0x{param_idx:02X})"
                 self.all_results[key] = {
+                    "name": param.name,
                     "value": value,
                     "unit": param.unit,
                     "register": f"0x{param_idx:02X}",
-                    "type": "parameter",
                 }
 
         # Add bit fields
