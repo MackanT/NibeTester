@@ -438,6 +438,12 @@ class NibeHeatPump:
                 self._send_with_space_parity(bytes([self.pump.ack]))
                 time.sleep(0.05)
 
+                # ETX and the next addressing sequence are sent by the pump
+                # with MARK parity - switch back now that our SPACE-parity
+                # reply is done, otherwise we're listening with the wrong
+                # parity for both.
+                self.serial.parity = serial.PARITY_MARK
+
                 # Wait for ETX
                 etx_start = time.time()
                 while time.time() - etx_start < 1.0:
@@ -448,7 +454,15 @@ class NibeHeatPump:
                             break
                     time.sleep(0.01)
             else:
-                logger.warning("⚠️ No data received")
+                # Per protocol, a checksum mismatch or receive timeout must
+                # be answered with NAK - otherwise the pump's master is left
+                # waiting indefinitely for an ACK/NAK that never arrives,
+                # which is the likely cause of it getting stuck until a
+                # power-cycle.
+                logger.warning("⚠️ No data received - sending NAK")
+                self._send_with_space_parity(bytes([self.pump.nak]))
+                time.sleep(0.05)
+                self.serial.parity = serial.PARITY_MARK
                 cycles_with_new_data += 1
 
         # Compile all results into a single dict
