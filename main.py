@@ -25,6 +25,7 @@ from psycopg2 import sql
 
 FULL_LINE = 53
 TIMEOUT = 300  # seconds (5 minutes)
+NAK_LOG_FILE = "nak_events.log" # TEMP
 
 # Setup logging
 logging.basicConfig(
@@ -32,6 +33,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# TEMP
+def _log_nak_event() -> None:
+    """Append a timestamped line to a dedicated file whenever a NAK is sent.
+
+    Kept separate from the main log so failure frequency can be tracked at a
+    glance (grep/wc -l) without wading through the verbose per-run output.
+    """
+    with open(NAK_LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(
+            f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - "
+            "NAK sent (checksum mismatch or receive timeout)\n"
+        )
+# TEMP
 
 @dataclass
 class BitField:
@@ -463,6 +477,7 @@ class NibeHeatPump:
                 self._send_with_space_parity(bytes([self.pump.nak]))
                 time.sleep(0.05)
                 self.serial.parity = serial.PARITY_MARK
+                _log_nak_event() # TEMP
                 cycles_with_new_data += 1
 
         # Compile all results into a single dict
