@@ -1575,6 +1575,39 @@ def main():
             pump.disconnect()
         return
 
+    # Recheck mode - re-tries only the ambiguous outcomes (ACK-but-
+    # unverified, unexpected bytes) rather than the plain no-response ones.
+    # Meant to be run right after a pump restart, to tell apart "this
+    # command byte genuinely does something odd" from "that was just bus
+    # noise from a connection under sustained heavy load".
+    if len(sys.argv) > 1 and sys.argv[1] == "sweep-recheck":
+        previous = load_sweep_state()
+        settled_outcomes = {"NAK", "SUCCESS - VERIFIED", "no addressing", "timeout", "no ENQ ack"}
+        candidates = sort_by_proximity_to_anchors(
+            [
+                cmd
+                for cmd, entry in previous.items()
+                if entry.get("outcome") not in settled_outcomes
+            ]
+        )
+        if not candidates:
+            print(f"No ambiguous results found in {SWEEP_RESULTS_FILE}")
+            return
+        print(f"Rechecking {len(candidates)} ambiguous command byte(s):")
+        for cmd in candidates:
+            print(f"  0x{cmd:02X}: was '{previous[cmd].get('outcome')}'")
+        pump = NibeHeatPump(SERIAL_PORT, parameters=NIBE_PARAMETERS, pump_info=PUMP)
+        if not pump.connect():
+            logger.error("❌ Failed to connect!")
+            return
+        try:
+            found = pump.sweep_write_command_bytes(0x0B, 6, candidates)
+            if found is not None:
+                print(f"\n🎉🎉 Found it! Command byte 0x{found:02X} works for RCU writes.")
+        finally:
+            pump.disconnect()
+        return
+
     print("")
     print("" + "=" * FULL_LINE)
     print(f"  Configured for {PUMP.name} Heat Pump Reader")
