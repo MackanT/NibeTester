@@ -1262,7 +1262,7 @@ def main():
     print("  1) Read parameters (normal operation)")
     print("  2) Read single parameter")
     print("  3) Write parameter value")
-    print("  4) Send test package (disabled)")
+    print("  4) Test write-packet encodings for 0x0B -> 6 (Kurvlutning)")
     print("  9) Capture bus traffic (diagnostic mode)")
     print("")
 
@@ -1546,268 +1546,137 @@ def main():
             else:
                 print("\n❌ Write failed!")
 
-        # Send custom packet
+        # Send custom packet - test alternate write-packet encodings against
+        # a real target (0x0B -> 6), since write_parameter()'s standard
+        # encoding (00 separator, with ENQ) already gets NAK'd. This tests
+        # the 2x2 matrix of the two suspected variables: whether the leading
+        # 0x00 separator byte (a read-format convention that may not apply
+        # to writes) is present, and whether ENQ is sent first.
         if choice == "4":
-            print("Feature disabled! Ending code")
-            return
-
             print("\n" + "=" * FULL_LINE)
-            print("  SEND CUSTOM PACKET - TEST BOTH ENCODINGS")
+            print("  SEND CUSTOM PACKET - TEST WRITE ENCODINGS")
             print("=" * FULL_LINE)
 
-            print("\nWhich encoding to test?")
+            test_param_idx = 0x0B  # Kurvlutning
+            test_value = 6
+
+            print(f"\nTesting write of 0x{test_param_idx:02X} (Kurvlutning) = {test_value}")
             print(
-                "1) With ENQ + Len=4:      Normal ENQ, C0 00 14 04 00 26 00 01 (gets NAK)"
+                "The standard write_parameter() encoding (00 separator, with ENQ)"
             )
-            print(
-                "2) With ENQ + Len=3:      Normal ENQ, C0 00 14 03 00 26 01 (no padding)"
+            print("already gets NAK'd - this tries the other 3 combinations.\n")
+
+            print("Which combination to test?")
+            print("  1) 00 separator,    with ENQ    (baseline - already known to NAK)")
+            print("  2) no separator,    with ENQ")
+            print("  3) 00 separator,    without ENQ")
+            print("  4) no separator,    without ENQ")
+
+            test_choice = input("\nChoice [1-4] (default: 2): ").strip() or "2"
+
+            use_separator = test_choice in ("1", "3")
+            use_enq = test_choice in ("1", "2")
+
+            if use_separator:
+                payload = [0x00, test_param_idx, test_value & 0xFF]
+            else:
+                payload = [test_param_idx, test_value & 0xFF]
+
+            base = [pump.pump.cmd_data, 0x00, pump.pump.rcu_addr, len(payload)] + payload
+            checksum = NibeProtocol.calc_checksum(base)
+            packet_bytes = bytes(base + [checksum])
+
+            packet_name = (
+                f"{'00-separator' if use_separator else 'no-separator'}, "
+                f"{'with ENQ' if use_enq else 'without ENQ'}"
             )
-            print(
-                "3) With ENQ + No 00:      Normal ENQ, C0 00 14 03 26 00 01 (no leading 00)"
-            )
-            print("4) Without ENQ:           Skip ENQ, C0 00 14 04 00 26 00 01")
 
-            test_choice = input("\nChoice [1-4]: ").strip() or "1"
+            print(f"\n{'=' * 60}")
+            print(f"Testing: {packet_name}")
+            print(f"Packet: {packet_bytes.hex(' ').upper()}")
+            print(f"{'=' * 60}\n")
+            time.sleep(1)
 
-            test_packets = []
+            # Wait for pump to address us
+            if not pump._wait_for_addressing(timeout=30.0):
+                print(f"❌ {packet_name}: Pump did not address RCU\n")
+                return
 
-            if test_choice == "1":
-                base1 = [0xC0, 0x00, 0x14, 0x04, 0x00, 0x26, 0x00, 0x01]
-                csum1 = NibeProtocol.calc_checksum(base1)
-                test_packets.append(("With ENQ + Len=4", base1 + [csum1], False, False))
-            elif test_choice == "2":
-                base2 = [0xC0, 0x00, 0x14, 0x03, 0x00, 0x26, 0x01]
-                csum2 = NibeProtocol.calc_checksum(base2)
-                test_packets.append(
-                    ("With ENQ + Len=3 (no padding)", base2 + [csum2], False, False)
-                )
-            elif test_choice == "3":
-                base3 = [0xC0, 0x00, 0x14, 0x03, 0x26, 0x00, 0x01]
-                csum3 = NibeProtocol.calc_checksum(base3)
-                test_packets.append(
-                    ("With ENQ + No leading 00", base3 + [csum3], False, False)
-                )
-            elif test_choice == "4":
-                base4 = [0xC0, 0x00, 0x14, 0x04, 0x00, 0x26, 0x00, 0x01]
-                csum4 = NibeProtocol.calc_checksum(base4)
-                test_packets.append(("Without ENQ", base4 + [csum4], True, False))
+            pump.serial.reset_input_buffer()
 
-            for item in test_packets:
-                if len(item) == 4:
-                    packet_name, package_bytes, skip_enq, wait_enq = item
-                else:
-                    # Old format compatibility
-                    packet_name, package_bytes = item[:2]
-                    skip_enq = item[2] if len(item) > 2 else False
-                    wait_enq = False
+            if use_enq:
+                logger.info("📤 Sending ENQ (write request)...")
+                pump._send_with_space_parity(bytes([pump.pump.enq]))
+                time.sleep(0.05)
 
-                print(f"\n{'=' * 60}")
-                print(f"Testing: {packet_name}")
-                print(f"Packet: {bytes(package_bytes).hex(' ').upper()}")
-                if skip_enq:
-                    print("⚠️  SKIPPING ENQ - sending directly after addressing")
-                if wait_enq:
-                    print("⚠️  WAITING FOR ENQ ADDRESSING (05 00 14) from pump")
-                print(f"{'=' * 60}\n")
-                time.sleep(1)
-
-                # Wait for pump to address us
-                if not pump._wait_for_addressing(timeout=30.0, wait_for_enq=wait_enq):
-                    if wait_enq:
-                        print(
-                            f"❌ {packet_name}: Pump did not send ENQ addressing (05 00 14)\n"
-                        )
-                        print("   Pump only sends regular addressing (03 00 14)")
-                    else:
-                        print(f"❌ {packet_name}: Pump did not address RCU\n")
-                    continue
-
-                # Clear buffer
-                pump.serial.reset_input_buffer()
-
-                # Send ENQ (unless skipping)
-                if not skip_enq:
-                    logger.info("📤 Sending ENQ (write request)...")
-                    pump._send_with_space_parity(bytes([pump.pump.enq]))
-                    time.sleep(0.05)
-
-                    # Wait for ACK from pump
-                    logger.info("⏳ Waiting for pump ACK...")
-                    ack_start = time.time()
-                    pump_acked = False
-                    while time.time() - ack_start < 2.0:
-                        if pump.serial.in_waiting > 0:
-                            byte = pump.serial.read(1)
-                            logger.info(f"   Received byte: 0x{byte[0]:02X}")
-                            if byte[0] == pump.pump.ack:
-                                logger.info("✅ Pump acknowledged write request")
-                                pump_acked = True
-                                break
-                        time.sleep(0.01)
-
-                    if not pump_acked:
-                        print(f"❌ {packet_name}: Pump did not acknowledge ENQ\n")
-                        continue
-                else:
-                    logger.info("⚠️  SKIPPING ENQ - sending packet directly")
-                    pump_acked = True  # Skip the check
+                logger.info("⏳ Waiting for pump ACK...")
+                ack_start = time.time()
+                pump_acked = False
+                while time.time() - ack_start < 2.0:
+                    if pump.serial.in_waiting > 0:
+                        byte = pump.serial.read(1)
+                        logger.info(f"   Received byte: 0x{byte[0]:02X}")
+                        if byte[0] == pump.pump.ack:
+                            logger.info("✅ Pump acknowledged write request")
+                            pump_acked = True
+                            break
                     time.sleep(0.01)
 
-                # Clear buffer before sending packet
-                pump.serial.reset_input_buffer()
-                logger.info("🧹 Cleared buffer before sending packet")
-
-                # Send packet
-                custom_packet = bytes(package_bytes)
-                logger.info(
-                    f"📤 Sending custom packet: {custom_packet.hex(' ').upper()}"
-                )
-                pump._send_with_space_parity(custom_packet)
-
-                # Wait for pump response
-                logger.info("⏳ Waiting for pump response...")
-                logger.info("   Looking for ANY response (ACK/NAK/data)...")
-                response_timeout = time.time() + 1.5  # Increased to 1.5 seconds
-                got_ack = False
-                ack_source = None
-                all_bytes = []
-
-                while time.time() < response_timeout:
-                    if pump.serial.in_waiting > 0:
-                        first_byte = pump.serial.read(1)[0]
-                        all_bytes.append(first_byte)
-                        logger.info(f"   📥 Byte {len(all_bytes)}: 0x{first_byte:02X}")
-
-                        # Check if this looks like addressing (00 followed by device address)
-                        if first_byte == 0x00 and pump.serial.in_waiting > 0:
-                            next_byte = pump.serial.read(1)[0]
-                            ack_source = next_byte
-                            logger.info(
-                                f"   🔍 Addressing detected: 0x00 0x{next_byte:02X} (device: "
-                                f"{'PUMP MASTER' if next_byte == 0x24 else 'RELAY' if next_byte == 0xF5 else 'DISPLAY' if next_byte == 0xF9 else 'RCU' if next_byte == 0x14 else 'UNKNOWN'})"
-                            )
-                            # Read the ACK that should follow
-                            if pump.serial.in_waiting > 0:
-                                time.sleep(0.01)
-                                if pump.serial.in_waiting > 0:
-                                    ack_byte = pump.serial.read(1)[0]
-                                    if ack_byte == pump.pump.ack:
-                                        logger.info(
-                                            f"   📥 Device 0x{next_byte:02X} sent ACK"
-                                        )
-                                        if next_byte == 0x24:
-                                            logger.info(
-                                                "   ✅ ACK from PUMP MASTER - this is what we need!"
-                                            )
-                                            got_ack = True
-                                            break
-                                        else:
-                                            logger.warning(
-                                                f"   ⚠️  ACK from 0x{next_byte:02X}, not pump master"
-                                            )
-                            continue
-
-                        logger.info(
-                            f"   🎯 Received: 0x{first_byte:02X} (ACK=0x{pump.pump.ack:02X}, NAK=0x{pump.pump.nak:02X})"
-                        )
-
-                        if first_byte == pump.pump.ack:
-                            logger.warning(
-                                f"   ⚠️  Bare ACK received (not from pump master)"
-                            )
-                            continue
-                        elif first_byte == pump.pump.nak:
-                            logger.error(f"❌ {packet_name}: NAK received")
-                            pump.serial.reset_input_buffer()
-                            break
-                        else:
-                            logger.warning(
-                                f"   Unexpected byte 0x{first_byte:02X}, checking next..."
-                            )
-                            continue
-                    time.sleep(0.001)
-
-                # Log all bytes received
-                if all_bytes:
-                    logger.info(
-                        f"   📊 All bytes received: {' '.join(f'{b:02X}' for b in all_bytes)}"
-                    )
-                else:
-                    logger.info("   📊 No bytes received from pump")
-
-                if got_ack:
-                    # Send ETX
+                if not pump_acked:
+                    print(f"❌ {packet_name}: Pump did not acknowledge ENQ\n")
                     pump.serial.parity = serial.PARITY_MARK
-                    pump.serial.write(bytes([pump.pump.etx]))
-                    pump.serial.flush()
-                    logger.info("📤 Sent *ETX")
-                    print(f"\n✅ {packet_name}: Got ACK from PUMP MASTER!\n")
+                    return
 
-                    # VERIFY WRITE - Read back the register to confirm
-                    print("🔍 Verifying write by reading back register 0x26...")
-                    time.sleep(2)  # Wait for write to complete
-                    pump.serial.reset_input_buffer()
-                    verify_value = pump.read_single_parameter(0x26, timeout=10.0)
-                    if verify_value is not None:
-                        print(f"   Read value: {verify_value}")
-                        if abs(verify_value - 1.0) < 0.1:
-                            print("   ✅ WRITE VERIFIED! Value changed to 1!")
-                        else:
-                            print(
-                                f"   ⚠️  Value is still {verify_value}, write did NOT persist"
-                            )
-                            print(
-                                "\n   💡 CONCLUSION: Pump does NOT support writes via RS-485 emulation"
-                            )
-                            print(
-                                "      The FIGHTER 360P likely requires a physical RCU device for writes."
-                            )
+            pump.serial.reset_input_buffer()
+
+            logger.info(f"📤 Sending custom packet: {packet_bytes.hex(' ').upper()}")
+            pump._send_with_space_parity(packet_bytes)
+
+            logger.info("⏳ Waiting for pump response (ACK/NAK)...")
+            response_timeout = time.time() + 2.0
+            result_byte = None
+            while time.time() < response_timeout:
+                if pump.serial.in_waiting > 0:
+                    result_byte = pump.serial.read(1)[0]
+                    logger.info(
+                        f"   Received byte: 0x{result_byte:02X} (ACK=0x{pump.pump.ack:02X}, NAK=0x{pump.pump.nak:02X})"
+                    )
+                    break
+                time.sleep(0.01)
+
+            if result_byte == pump.pump.ack:
+                print(f"\n✅ {packet_name}: Got ACK! Sending ETX...")
+                pump.serial.parity = serial.PARITY_MARK
+                pump.serial.write(bytes([pump.pump.etx]))
+                pump.serial.flush()
+
+                print(
+                    f"🔍 Verifying write by reading back register 0x{test_param_idx:02X}..."
+                )
+                time.sleep(2)
+                pump.serial.reset_input_buffer()
+                verify_value = pump.read_single_parameter(test_param_idx, timeout=10.0)
+                if verify_value is not None:
+                    print(f"   Read value: {verify_value}")
+                    if abs(verify_value - test_value) < 0.1:
+                        print(
+                            f"   🎉 WRITE VERIFIED! Correct encoding: {packet_name}"
+                        )
                     else:
-                        print("   ⚠️  Could not read back value")
+                        print(
+                            f"   ⚠️  Value is still {verify_value}, write did NOT persist"
+                        )
                 else:
-                    if ack_source:
-                        logger.warning(
-                            f"❌ Only got ACK from device 0x{ack_source:02X}, NOT from pump master (0x24)"
-                        )
-                        print(
-                            f"\n⚠️  {packet_name}: ACK from wrong device (0x{ack_source:02X})"
-                        )
-                        print("   Pump master (0x24) did not respond to write request")
-                        print(
-                            "\n   💡 This suggests the FIGHTER 360P does NOT support writes via RS-485"
-                        )
-                    else:
-                        logger.error(
-                            f"❌ {packet_name}: Timeout - no response from pump"
-                        )
-
-                # Additional checks
-                time.sleep(0.15)
-                buffer_count = pump.serial.in_waiting
-                logger.info(f"⏳ After 0.2s total - Buffer: {buffer_count} bytes")
-
-                if buffer_count > 0:
-                    buffered_bytes = pump.serial.read(buffer_count)
-                    logger.info(
-                        f"   📦 Buffer contents: {buffered_bytes.hex(' ').upper()}"
-                    )
-                    logger.info(f"   📦 As decimal: {[b for b in buffered_bytes]}")
-
-                time.sleep(0.35)
-                buffer_count2 = pump.serial.in_waiting
-                logger.info(f"⏳ After 0.5s total - Buffer: {buffer_count2} bytes")
-
-                if buffer_count2 > 0:
-                    buffered_bytes2 = pump.serial.read(buffer_count2)
-                    logger.info(
-                        f"   📦 Additional buffer contents: {buffered_bytes2.hex(' ').upper()}"
-                    )
-
-                print(f"\n{'=' * 60}\n")
-
-                if got_ack:
-                    print(f"🎉 {packet_name} worked! This is the correct encoding.")
-                    break  # Stop testing if we found the right one
+                    print("   ⚠️  Could not read back value")
+            elif result_byte == pump.pump.nak:
+                print(f"\n❌ {packet_name}: NAK - pump rejected this encoding")
+                pump.serial.parity = serial.PARITY_MARK
+            elif result_byte is not None:
+                print(f"\n⚠️  {packet_name}: Unexpected byte 0x{result_byte:02X}")
+                pump.serial.parity = serial.PARITY_MARK
+            else:
+                print(f"\n❌ {packet_name}: Timeout - no response from pump")
+                pump.serial.parity = serial.PARITY_MARK
 
     except KeyboardInterrupt:
         print("\n\n⚠️ Interrupted by user")
