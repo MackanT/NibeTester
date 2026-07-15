@@ -1568,27 +1568,31 @@ def main():
 
             print("Which combination to test?")
             print("  1) 00 separator,    with ENQ    (baseline - already known to NAK)")
-            print("  2) no separator,    with ENQ")
-            print("  3) 00 separator,    without ENQ")
-            print("  4) no separator,    without ENQ")
+            print("  2) no separator,    with ENQ    (already known to NAK)")
+            print("  3) 00 separator,    without ENQ (not meaningful - disregard result)")
+            print("  4) no separator,    without ENQ (not meaningful - disregard result)")
+            print("  5) 00 separator,    with ENQ, length field INCLUDES checksum")
 
-            test_choice = input("\nChoice [1-4] (default: 2): ").strip() or "2"
+            test_choice = input("\nChoice [1-5] (default: 5): ").strip() or "5"
 
-            use_separator = test_choice in ("1", "3")
-            use_enq = test_choice in ("1", "2")
+            use_separator = test_choice in ("1", "3", "5")
+            use_enq = test_choice in ("1", "2", "5")
+            length_includes_checksum = test_choice == "5"
 
             if use_separator:
                 payload = [0x00, test_param_idx, test_value & 0xFF]
             else:
                 payload = [test_param_idx, test_value & 0xFF]
 
-            base = [pump.pump.cmd_data, 0x00, pump.pump.rcu_addr, len(payload)] + payload
+            length_field = len(payload) + 1 if length_includes_checksum else len(payload)
+            base = [pump.pump.cmd_data, 0x00, pump.pump.rcu_addr, length_field] + payload
             checksum = NibeProtocol.calc_checksum(base)
             packet_bytes = bytes(base + [checksum])
 
             packet_name = (
                 f"{'00-separator' if use_separator else 'no-separator'}, "
                 f"{'with ENQ' if use_enq else 'without ENQ'}"
+                f"{', len+=1' if length_includes_checksum else ''}"
             )
 
             print(f"\n{'=' * 60}")
