@@ -1227,7 +1227,7 @@ def main():
     print("Options:")
     print("  1) Read parameters (normal operation)")
     print("  2) Read single parameter")
-    print("  3) Write parameter value (disabled)")
+    print("  3) Write parameter value")
     print("  4) Send test package (disabled)")
     print("  9) Capture bus traffic (diagnostic mode)")
     print("")
@@ -1418,9 +1418,6 @@ def main():
 
         # Write parameter
         if choice == "3":
-            print("Feature disabled! Ending code")
-            return
-
             print("\n" + "=" * FULL_LINE)
             print("  WRITE PARAMETER")
             print("=" * FULL_LINE)

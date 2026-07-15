@@ -95,6 +95,7 @@ pumps:
         factor: 1.0
         unit: ""
         writable: true
+        data_type: "s8"
         menu_structure: "M2.1"
         min_value: -1
         max_value: 15
@@ -326,6 +327,7 @@ pumps:
         factor: 1.0
         unit: ""
         writable: true
+        data_type: "s8"
         menu_structure: "M9.1.6"
       - id: 0x1B
         name: "Antal starter kompressor"
@@ -354,6 +356,7 @@ pumps:
         factor: 1.0
         unit: "°C"
         writable: true
+        data_type: "s8"
         menu_structure: "M2.4"
         min_value: 10
         max_value: 65
@@ -363,6 +366,7 @@ pumps:
         factor: 1.0
         unit: "°C"
         writable: true
+        data_type: "s8"
         menu_structure: "M2.3"
         min_value: 10
         max_value: 65
@@ -382,6 +386,7 @@ pumps:
         factor: 1.0
         unit: "dygn"
         writable: true
+        data_type: "s8"
         menu_structure: "M1.3"
         min_value: 0
         max_value: 90
@@ -429,6 +434,7 @@ pumps:
         factor: 1.0
         unit: ""
         writable: true
+        data_type: "s8"
         menu_structure: "M2.7"
         min_value: -10
         max_value: 10
@@ -438,6 +444,7 @@ pumps:
         factor: 1.0
         unit: "°C"
         writable: true
+        data_type: "s8"
         menu_structure: "M5.6"
         min_value: 0
         max_value: 20
