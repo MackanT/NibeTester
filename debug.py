@@ -1070,6 +1070,8 @@ class NibeHeatPump:
         value: int,
         command_bytes: List[int],
         response_timeout: float = 2.0,
+        addressing_timeout: Optional[float] = None,
+        enq_ack_timeout: float = 2.0,
     ) -> Optional[int]:
         """
         Try writing a value using different leading command bytes, keeping
@@ -1080,7 +1082,16 @@ class NibeHeatPump:
 
         Stops at the first command byte that gets ACK'd and verifies via a
         readback. Returns the working command byte if found, else None.
+
+        response_timeout/addressing_timeout/enq_ack_timeout let a caller
+        trade speed for reliability - a small, deliberate recheck of a
+        handful of candidates can afford to wait longer per attempt than a
+        256-candidate sweep, where speed matters more than squeezing out
+        every last borderline-timed response.
         """
+        if addressing_timeout is None:
+            addressing_timeout = self.ADDRESSING_TIMEOUT
+
         print(f"\n{'=' * FULL_LINE}")
         print(
             f"🔍 Sweeping {len(command_bytes)} command byte candidates for "
@@ -1094,7 +1105,14 @@ class NibeHeatPump:
 
         try:
             return self._run_command_byte_sweep(
-                param_index, value, command_bytes, response_timeout, results, sweep_start
+                param_index,
+                value,
+                command_bytes,
+                response_timeout,
+                addressing_timeout,
+                enq_ack_timeout,
+                results,
+                sweep_start,
             )
         except KeyboardInterrupt:
             print("\n\n⚠️ Sweep interrupted - showing results collected so far:")
@@ -1131,7 +1149,13 @@ class NibeHeatPump:
     # bad window instead of failing fast enough to retry sooner.
 
     def _attempt_write_once(
-        self, param_index: int, value: int, cmd: int, response_timeout: float
+        self,
+        param_index: int,
+        value: int,
+        cmd: int,
+        response_timeout: float,
+        addressing_timeout: float,
+        enq_ack_timeout: float,
     ) -> Tuple[str, Optional[float]]:
         """One single attempt: address, ENQ, send, wait for response. Returns
         (outcome, verify_value). verify_value is only set for the ACK path."""
@@ -1140,7 +1164,7 @@ class NibeHeatPump:
         checksum = NibeProtocol.calc_checksum(base)
         packet_bytes = bytes(base + [checksum])
 
-        if not self._wait_for_addressing(timeout=self.ADDRESSING_TIMEOUT, verbose=False):
+        if not self._wait_for_addressing(timeout=addressing_timeout, verbose=False):
             return "no addressing", None
 
         self.serial.reset_input_buffer()
@@ -1149,7 +1173,7 @@ class NibeHeatPump:
 
         ack_start = time.time()
         pump_acked = False
-        while time.time() - ack_start < 2.0:
+        while time.time() - ack_start < enq_ack_timeout:
             if self.serial.in_waiting > 0:
                 byte = self.serial.read(1)
                 if byte[0] == self.pump.ack:
@@ -1198,6 +1222,8 @@ class NibeHeatPump:
         value: int,
         command_bytes: List[int],
         response_timeout: float,
+        addressing_timeout: float,
+        enq_ack_timeout: float,
         results: List[Tuple[int, str]],
         sweep_start: float,
     ) -> Optional[int]:
@@ -1212,7 +1238,12 @@ class NibeHeatPump:
             outcome = "timeout"
             for attempt in range(self.MAX_ATTEMPTS_PER_CANDIDATE):
                 outcome, verify_value = self._attempt_write_once(
-                    param_index, value, cmd, response_timeout
+                    param_index,
+                    value,
+                    cmd,
+                    response_timeout,
+                    addressing_timeout,
+                    enq_ack_timeout,
                 )
 
                 if outcome == "SUCCESS - VERIFIED":
@@ -1601,7 +1632,16 @@ def main():
             logger.error("❌ Failed to connect!")
             return
         try:
-            found = pump.sweep_write_command_bytes(0x0B, 6, candidates)
+            # Longer timeouts than the big sweeps - this is a small, quick,
+            # deliberate check where reliability matters more than speed.
+            found = pump.sweep_write_command_bytes(
+                0x0B,
+                6,
+                candidates,
+                response_timeout=5.0,
+                addressing_timeout=15.0,
+                enq_ack_timeout=5.0,
+            )
             if found is not None:
                 print(f"\n🎉🎉 Found it! Command byte 0x{found:02X} works for RCU writes.")
         finally:
