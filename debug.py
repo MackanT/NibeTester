@@ -1122,6 +1122,76 @@ class NibeHeatPump:
         except OSError as e:
             logger.warning(f"Could not write to {SWEEP_RESULTS_FILE}: {e}")
 
+    # Inconclusive outcomes - worth a quick retry within the same candidate
+    # slot rather than immediately giving up on it for this pass.
+    INCONCLUSIVE_OUTCOMES = {"no addressing", "no ENQ ack", "timeout"}
+    MAX_ATTEMPTS_PER_CANDIDATE = 3
+    ADDRESSING_TIMEOUT = 5.0  # was 15.0 - RCU is normally addressed every
+    # 0.5-2s under healthy conditions, so 15s mostly just wasted time on a
+    # bad window instead of failing fast enough to retry sooner.
+
+    def _attempt_write_once(
+        self, param_index: int, value: int, cmd: int, response_timeout: float
+    ) -> Tuple[str, Optional[float]]:
+        """One single attempt: address, ENQ, send, wait for response. Returns
+        (outcome, verify_value). verify_value is only set for the ACK path."""
+        payload = [0x00, param_index, value & 0xFF]
+        base = [cmd, 0x00, self.pump.rcu_addr, len(payload)] + payload
+        checksum = NibeProtocol.calc_checksum(base)
+        packet_bytes = bytes(base + [checksum])
+
+        if not self._wait_for_addressing(timeout=self.ADDRESSING_TIMEOUT, verbose=False):
+            return "no addressing", None
+
+        self.serial.reset_input_buffer()
+        self._send_with_space_parity(bytes([self.pump.enq]))
+        time.sleep(0.05)
+
+        ack_start = time.time()
+        pump_acked = False
+        while time.time() - ack_start < 2.0:
+            if self.serial.in_waiting > 0:
+                byte = self.serial.read(1)
+                if byte[0] == self.pump.ack:
+                    pump_acked = True
+                    break
+            time.sleep(0.01)
+
+        if not pump_acked:
+            self.serial.parity = serial.PARITY_MARK
+            return "no ENQ ack", None
+
+        self.serial.reset_input_buffer()
+        self._send_with_space_parity(packet_bytes)
+
+        wait_until = time.time() + response_timeout
+        result_byte = None
+        while time.time() < wait_until:
+            if self.serial.in_waiting > 0:
+                result_byte = self.serial.read(1)[0]
+                break
+            time.sleep(0.01)
+
+        if result_byte == self.pump.ack:
+            self.serial.parity = serial.PARITY_MARK
+            self.serial.write(bytes([self.pump.etx]))
+            self.serial.flush()
+            time.sleep(2)
+            self.serial.reset_input_buffer()
+            verify_value = self.read_single_parameter(param_index, timeout=10.0)
+            if verify_value is not None and abs(verify_value - value) < 0.1:
+                return "SUCCESS - VERIFIED", verify_value
+            return f"ACK but unverified (read {verify_value})", verify_value
+        elif result_byte == self.pump.nak:
+            self.serial.parity = serial.PARITY_MARK
+            return "NAK", None
+        elif result_byte is not None:
+            self.serial.parity = serial.PARITY_MARK
+            return f"unexpected 0x{result_byte:02X}", None
+        else:
+            self.serial.parity = serial.PARITY_MARK
+            return "timeout", None
+
     def _run_command_byte_sweep(
         self,
         param_index: int,
@@ -1132,96 +1202,46 @@ class NibeHeatPump:
         sweep_start: float,
     ) -> Optional[int]:
         for i, cmd in enumerate(command_bytes):
-            payload = [0x00, param_index, value & 0xFF]
-            base = [cmd, 0x00, self.pump.rcu_addr, len(payload)] + payload
-            checksum = NibeProtocol.calc_checksum(base)
-            packet_bytes = bytes(base + [checksum])
-
             elapsed_min = (time.time() - sweep_start) / 60
             print(f"\n{'-' * 40}")
             print(
                 f"[{i + 1}/{len(command_bytes)}, {elapsed_min:.1f}min elapsed] "
-                f"Trying cmd=0x{cmd:02X}: {packet_bytes.hex(' ').upper()}"
+                f"Trying cmd=0x{cmd:02X}"
             )
 
-            if not self._wait_for_addressing(timeout=15.0, verbose=False):
-                print(f"  ❌ 0x{cmd:02X}: pump did not address RCU")
-                self._record_sweep_result(results, cmd, "no addressing")
-                continue
+            outcome = "timeout"
+            for attempt in range(self.MAX_ATTEMPTS_PER_CANDIDATE):
+                outcome, verify_value = self._attempt_write_once(
+                    param_index, value, cmd, response_timeout
+                )
 
-            self.serial.reset_input_buffer()
-
-            self._send_with_space_parity(bytes([self.pump.enq]))
-            time.sleep(0.05)
-
-            ack_start = time.time()
-            pump_acked = False
-            while time.time() - ack_start < 2.0:
-                if self.serial.in_waiting > 0:
-                    byte = self.serial.read(1)
-                    if byte[0] == self.pump.ack:
-                        pump_acked = True
-                        break
-                time.sleep(0.01)
-
-            if not pump_acked:
-                print(f"  ❌ 0x{cmd:02X}: pump did not ACK the ENQ")
-                self.serial.parity = serial.PARITY_MARK
-                self._record_sweep_result(results, cmd, "no ENQ ack")
-                time.sleep(1.0 + random.uniform(0, 2.0))
-                continue
-
-            self.serial.reset_input_buffer()
-            self._send_with_space_parity(packet_bytes)
-
-            wait_until = time.time() + response_timeout
-            result_byte = None
-            while time.time() < wait_until:
-                if self.serial.in_waiting > 0:
-                    result_byte = self.serial.read(1)[0]
-                    break
-                time.sleep(0.01)
-
-            if result_byte == self.pump.ack:
-                print(f"  ✅ 0x{cmd:02X}: ACK! Sending ETX and verifying...")
-                self.serial.parity = serial.PARITY_MARK
-                self.serial.write(bytes([self.pump.etx]))
-                self.serial.flush()
-                time.sleep(2)
-                self.serial.reset_input_buffer()
-                verify_value = self.read_single_parameter(param_index, timeout=10.0)
-                if verify_value is not None and abs(verify_value - value) < 0.1:
+                if outcome == "SUCCESS - VERIFIED":
                     print(
                         f"  🎉 CONFIRMED! cmd=0x{cmd:02X} is the correct write command byte!"
                     )
-                    self._record_sweep_result(results, cmd, "SUCCESS - VERIFIED")
+                    self._record_sweep_result(results, cmd, outcome)
                     self._print_sweep_summary(results)
                     return cmd
-                else:
-                    print(
-                        f"  ⚠️  Got ACK but readback shows {verify_value}, expected {value} - inconclusive"
-                    )
-                    self._record_sweep_result(
-                        results, cmd, f"ACK but unverified (read {verify_value})"
-                    )
-            elif result_byte == self.pump.nak:
-                print(f"  ❌ 0x{cmd:02X}: NAK")
-                self.serial.parity = serial.PARITY_MARK
-                self._record_sweep_result(results, cmd, "NAK")
-            elif result_byte is not None:
-                print(f"  ⚠️  0x{cmd:02X}: unexpected byte 0x{result_byte:02X}")
-                self.serial.parity = serial.PARITY_MARK
-                self._record_sweep_result(results, cmd, f"unexpected 0x{result_byte:02X}")
-            else:
-                print(f"  ❌ 0x{cmd:02X}: timeout, no response")
-                self.serial.parity = serial.PARITY_MARK
-                self._record_sweep_result(results, cmd, "timeout")
+
+                if outcome not in self.INCONCLUSIVE_OUTCOMES:
+                    # Conclusive (NAK, ACK-but-unverified, unexpected byte) -
+                    # no point retrying this candidate further this pass.
+                    print(f"  0x{cmd:02X}: {outcome} (attempt {attempt + 1})")
+                    break
+
+                print(
+                    f"  ❌ 0x{cmd:02X}: {outcome} "
+                    f"(attempt {attempt + 1}/{self.MAX_ATTEMPTS_PER_CANDIDATE})"
+                )
+                if attempt < self.MAX_ATTEMPTS_PER_CANDIDATE - 1:
+                    time.sleep(0.5 + random.uniform(0, 1.0))
+
+            self._record_sweep_result(results, cmd, outcome)
 
             # Jittered pause (not a fixed interval) - a fixed pause here
             # aliases against the pump master's own independent polling
             # cycle, producing a misleading periodic pattern in results
-            # (e.g. every 7th attempt landing in the same phase of the
-            # master's cycle) rather than genuine per-value signal.
+            # rather than genuine per-value signal.
             time.sleep(1.5 + random.uniform(0, 3.0))
 
         self._print_sweep_summary(results)
