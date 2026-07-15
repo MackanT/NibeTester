@@ -369,6 +369,19 @@ class NibeHeatPump:
         print(f"{'=' * FULL_LINE}")
         print(f"Collecting data (timeout: {timeout}s)...\n")
 
+        # Track which register IDs have been seen at least once, regardless
+        # of whether they're plain parameters or bitmask registers - once a
+        # register has been seen, its value doesn't matter for deciding when
+        # collection is complete. This replaces checking "is param_idx in
+        # self.parameter_values", which could never be satisfied for bitmask
+        # registers (0x13/0x14/0x15/0x16/0x25) since their values are stored
+        # in self.bit_field_values instead - meaning those registers looked
+        # "new" every single time they appeared, the 3-stable-cycles exit
+        # condition could never be reached, and every run was forced to run
+        # until the full timeout instead of stopping once actually done.
+        expected_register_ids = set(self.parameters.keys())
+        seen_register_ids: set = set()
+
         cycles_with_new_data = 0
         max_cycles_without_new = 3
         start_time = time.time()
@@ -377,6 +390,11 @@ class NibeHeatPump:
             # Check timeout
             if time.time() - start_time > timeout:
                 logger.warning(f"⏱️ Maximum read time ({timeout}s) exceeded. Stopping.")
+                break
+
+            # All known registers seen at least once - nothing left to wait for.
+            if seen_register_ids >= expected_register_ids:
+                logger.info("✅ All known registers seen at least once. Stopping.")
                 break
 
             # Wait for pump to address RCU
@@ -393,11 +411,12 @@ class NibeHeatPump:
             response = self._read_response(timeout=2.0)
 
             if response:
-                # Check if we got any new parameters
+                # Check if we got any not-yet-seen registers
                 new_params = 0
                 for param_idx in response["parameters"].keys():
-                    if param_idx not in self.parameter_values:
+                    if param_idx not in seen_register_ids:
                         new_params += 1
+                        seen_register_ids.add(param_idx)
 
                 if new_params > 0:
                     cycles_with_new_data = 0
