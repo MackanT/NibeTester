@@ -16,9 +16,11 @@ from dataclasses import dataclass
 import logging
 import yaml
 import sys
+from datetime import datetime
 
 FULL_LINE = 53
 TIMEOUT = 60  # seconds
+SWEEP_RESULTS_FILE = "sweep_results.txt"
 
 # Setup logging
 logging.basicConfig(
@@ -1060,22 +1062,72 @@ class NibeHeatPump:
             f"🔍 Sweeping {len(command_bytes)} command byte candidates for "
             f"0x{param_index:02X} = {value}"
         )
+        print(f"Results also being written to: {SWEEP_RESULTS_FILE}")
         print(f"{'=' * FULL_LINE}\n")
 
-        results: List[Tuple[int, str]] = []
+        try:
+            with open(SWEEP_RESULTS_FILE, "a", encoding="utf-8") as f:
+                f.write(
+                    f"\n=== Sweep started {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} "
+                    f"- 0x{param_index:02X} = {value}, {len(command_bytes)} candidates ===\n"
+                )
+        except OSError as e:
+            logger.warning(f"Could not write to {SWEEP_RESULTS_FILE}: {e}")
 
-        for cmd in command_bytes:
+        results: List[Tuple[int, str]] = []
+        sweep_start = time.time()
+
+        try:
+            return self._run_command_byte_sweep(
+                param_index, value, command_bytes, response_timeout, results, sweep_start
+            )
+        except KeyboardInterrupt:
+            print("\n\n⚠️ Sweep interrupted - showing results collected so far:")
+            self.serial.parity = serial.PARITY_MARK
+            self._print_sweep_summary(results)
+            return None
+
+    def _record_sweep_result(
+        self, results: List[Tuple[int, str]], cmd: int, outcome: str
+    ) -> None:
+        """Record a sweep attempt in memory and append it to a results file
+        immediately, so progress survives even if the process is killed or
+        the connection drops mid-sweep - not just written at the end."""
+        results.append((cmd, outcome))
+        try:
+            with open(SWEEP_RESULTS_FILE, "a", encoding="utf-8") as f:
+                f.write(
+                    f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - "
+                    f"0x{cmd:02X}: {outcome}\n"
+                )
+        except OSError as e:
+            logger.warning(f"Could not write to {SWEEP_RESULTS_FILE}: {e}")
+
+    def _run_command_byte_sweep(
+        self,
+        param_index: int,
+        value: int,
+        command_bytes: List[int],
+        response_timeout: float,
+        results: List[Tuple[int, str]],
+        sweep_start: float,
+    ) -> Optional[int]:
+        for i, cmd in enumerate(command_bytes):
             payload = [0x00, param_index, value & 0xFF]
             base = [cmd, 0x00, self.pump.rcu_addr, len(payload)] + payload
             checksum = NibeProtocol.calc_checksum(base)
             packet_bytes = bytes(base + [checksum])
 
+            elapsed_min = (time.time() - sweep_start) / 60
             print(f"\n{'-' * 40}")
-            print(f"Trying cmd=0x{cmd:02X}: {packet_bytes.hex(' ').upper()}")
+            print(
+                f"[{i + 1}/{len(command_bytes)}, {elapsed_min:.1f}min elapsed] "
+                f"Trying cmd=0x{cmd:02X}: {packet_bytes.hex(' ').upper()}"
+            )
 
             if not self._wait_for_addressing(timeout=15.0, verbose=False):
                 print(f"  ❌ 0x{cmd:02X}: pump did not address RCU")
-                results.append((cmd, "no addressing"))
+                self._record_sweep_result(results, cmd, "no addressing")
                 continue
 
             self.serial.reset_input_buffer()
@@ -1096,7 +1148,7 @@ class NibeHeatPump:
             if not pump_acked:
                 print(f"  ❌ 0x{cmd:02X}: pump did not ACK the ENQ")
                 self.serial.parity = serial.PARITY_MARK
-                results.append((cmd, "no ENQ ack"))
+                self._record_sweep_result(results, cmd, "no ENQ ack")
                 time.sleep(1.0)
                 continue
 
@@ -1123,26 +1175,28 @@ class NibeHeatPump:
                     print(
                         f"  🎉 CONFIRMED! cmd=0x{cmd:02X} is the correct write command byte!"
                     )
-                    results.append((cmd, "SUCCESS - VERIFIED"))
+                    self._record_sweep_result(results, cmd, "SUCCESS - VERIFIED")
                     self._print_sweep_summary(results)
                     return cmd
                 else:
                     print(
                         f"  ⚠️  Got ACK but readback shows {verify_value}, expected {value} - inconclusive"
                     )
-                    results.append((cmd, f"ACK but unverified (read {verify_value})"))
+                    self._record_sweep_result(
+                        results, cmd, f"ACK but unverified (read {verify_value})"
+                    )
             elif result_byte == self.pump.nak:
                 print(f"  ❌ 0x{cmd:02X}: NAK")
                 self.serial.parity = serial.PARITY_MARK
-                results.append((cmd, "NAK"))
+                self._record_sweep_result(results, cmd, "NAK")
             elif result_byte is not None:
                 print(f"  ⚠️  0x{cmd:02X}: unexpected byte 0x{result_byte:02X}")
                 self.serial.parity = serial.PARITY_MARK
-                results.append((cmd, f"unexpected 0x{result_byte:02X}"))
+                self._record_sweep_result(results, cmd, f"unexpected 0x{result_byte:02X}")
             else:
                 print(f"  ❌ 0x{cmd:02X}: timeout, no response")
                 self.serial.parity = serial.PARITY_MARK
-                results.append((cmd, "timeout"))
+                self._record_sweep_result(results, cmd, "timeout")
 
             time.sleep(1.5)  # brief pause before re-addressing for next attempt
 
@@ -1156,6 +1210,17 @@ class NibeHeatPump:
         for cmd, outcome in results:
             print(f"  0x{cmd:02X}: {outcome}")
         print()
+
+        try:
+            with open(SWEEP_RESULTS_FILE, "a", encoding="utf-8") as f:
+                f.write(
+                    f"--- Summary ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')}) ---\n"
+                )
+                for cmd, outcome in results:
+                    f.write(f"  0x{cmd:02X}: {outcome}\n")
+                f.write("\n")
+        except OSError as e:
+            logger.warning(f"Could not write to {SWEEP_RESULTS_FILE}: {e}")
 
     def get_value(self, param_index: int) -> Optional[float]:
         """Get cached parameter value"""
@@ -1389,6 +1454,23 @@ def main():
     logger.info(
         f"✅ Code detected environment: {system_name}, using {SERIAL_PORT} as default serial port."
     )
+
+    # Non-interactive full sweep mode - bypasses every input() prompt so it
+    # can run unattended (e.g. `nohup python debug.py sweep &` over SSH,
+    # so it keeps going after the session disconnects). Results stream to
+    # SWEEP_RESULTS_FILE as they happen, not just at the end.
+    if len(sys.argv) > 1 and sys.argv[1] == "sweep":
+        pump = NibeHeatPump(SERIAL_PORT, parameters=NIBE_PARAMETERS, pump_info=PUMP)
+        if not pump.connect():
+            logger.error("❌ Failed to connect!")
+            return
+        try:
+            found = pump.sweep_write_command_bytes(0x0B, 6, list(range(0x00, 0x100)))
+            if found is not None:
+                print(f"\n🎉🎉 Found it! Command byte 0x{found:02X} works for RCU writes.")
+        finally:
+            pump.disconnect()
+        return
 
     print("")
     print("" + "=" * FULL_LINE)
@@ -1835,20 +1917,35 @@ def main():
         # for master-to-RCU broadcasts. Keeps the otherwise-confirmed-correct
         # packet structure fixed and only varies this one byte.
         if choice == "6":
-            candidates = [
-                0x3F, 0x40, 0x41,  # around display's write command (0x40)
-                0x44, 0x45, 0x46,  # around relay's write command (0x45)
-                0x54, 0x55, 0x56,  # around master's push command (0x55)
-            ]
+            print("\nSweep mode:")
+            print("  1) Quick - 9 evidenced candidates (~2-3 minutes)")
+            print("  2) Full - 0x00-0xFF, all 256 values (could take 30-60+ minutes)")
+            sweep_mode = input("\nChoice [1/2] (default: 1): ").strip() or "1"
+
+            if sweep_mode == "2":
+                candidates = list(range(0x00, 0x100))
+                print(
+                    f"\n⚠️  Full sweep: {len(candidates)} candidates, each involving "
+                    "real bus traffic. This will run for a while - Ctrl+C to stop "
+                    "early if needed (already-tried results stay in the summary)."
+                )
+                time.sleep(2)
+            else:
+                candidates = [
+                    0x3F, 0x40, 0x41,  # around display's write command (0x40)
+                    0x44, 0x45, 0x46,  # around relay's write command (0x45)
+                    0x54, 0x55, 0x56,  # around master's push command (0x55)
+                ]
+
             found = pump.sweep_write_command_bytes(0x0B, 6, candidates)
             if found is not None:
                 print(f"\n🎉🎉 Found it! Command byte 0x{found:02X} works for RCU writes.")
             else:
                 print(
-                    "\nNone of the swept command bytes worked. The real RCU command "
-                    "byte may be outside this range - worth trying a full 0x00-0xFF "
-                    "sweep if you're willing to let it run longer, or capturing real "
-                    "RCU traffic directly if that ever becomes possible."
+                    "\nNone of the swept command bytes worked."
+                    if sweep_mode == "2"
+                    else "\nNone of the swept command bytes worked. Try option 6 again "
+                    "with the full 0x00-0xFF sweep for a more exhaustive search."
                 )
 
     except KeyboardInterrupt:
