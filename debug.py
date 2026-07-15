@@ -1038,6 +1038,125 @@ class NibeHeatPump:
         self.serial.parity = serial.PARITY_MARK
         return False
 
+    def sweep_write_command_bytes(
+        self,
+        param_index: int,
+        value: int,
+        command_bytes: List[int],
+        response_timeout: float = 2.0,
+    ) -> Optional[int]:
+        """
+        Try writing a value using different leading command bytes, keeping
+        everything else (00 separator, RCU as sender, length excludes
+        checksum) fixed to the structure confirmed correct against real
+        captured bus traffic - only 0xC0 (used for master-to-RCU broadcasts)
+        was ever wrong, not the framing or checksum algorithm.
+
+        Stops at the first command byte that gets ACK'd and verifies via a
+        readback. Returns the working command byte if found, else None.
+        """
+        print(f"\n{'=' * FULL_LINE}")
+        print(
+            f"🔍 Sweeping {len(command_bytes)} command byte candidates for "
+            f"0x{param_index:02X} = {value}"
+        )
+        print(f"{'=' * FULL_LINE}\n")
+
+        results: List[Tuple[int, str]] = []
+
+        for cmd in command_bytes:
+            payload = [0x00, param_index, value & 0xFF]
+            base = [cmd, 0x00, self.pump.rcu_addr, len(payload)] + payload
+            checksum = NibeProtocol.calc_checksum(base)
+            packet_bytes = bytes(base + [checksum])
+
+            print(f"\n{'-' * 40}")
+            print(f"Trying cmd=0x{cmd:02X}: {packet_bytes.hex(' ').upper()}")
+
+            if not self._wait_for_addressing(timeout=15.0, verbose=False):
+                print(f"  ❌ 0x{cmd:02X}: pump did not address RCU")
+                results.append((cmd, "no addressing"))
+                continue
+
+            self.serial.reset_input_buffer()
+
+            self._send_with_space_parity(bytes([self.pump.enq]))
+            time.sleep(0.05)
+
+            ack_start = time.time()
+            pump_acked = False
+            while time.time() - ack_start < 2.0:
+                if self.serial.in_waiting > 0:
+                    byte = self.serial.read(1)
+                    if byte[0] == self.pump.ack:
+                        pump_acked = True
+                        break
+                time.sleep(0.01)
+
+            if not pump_acked:
+                print(f"  ❌ 0x{cmd:02X}: pump did not ACK the ENQ")
+                self.serial.parity = serial.PARITY_MARK
+                results.append((cmd, "no ENQ ack"))
+                time.sleep(1.0)
+                continue
+
+            self.serial.reset_input_buffer()
+            self._send_with_space_parity(packet_bytes)
+
+            wait_until = time.time() + response_timeout
+            result_byte = None
+            while time.time() < wait_until:
+                if self.serial.in_waiting > 0:
+                    result_byte = self.serial.read(1)[0]
+                    break
+                time.sleep(0.01)
+
+            if result_byte == self.pump.ack:
+                print(f"  ✅ 0x{cmd:02X}: ACK! Sending ETX and verifying...")
+                self.serial.parity = serial.PARITY_MARK
+                self.serial.write(bytes([self.pump.etx]))
+                self.serial.flush()
+                time.sleep(2)
+                self.serial.reset_input_buffer()
+                verify_value = self.read_single_parameter(param_index, timeout=10.0)
+                if verify_value is not None and abs(verify_value - value) < 0.1:
+                    print(
+                        f"  🎉 CONFIRMED! cmd=0x{cmd:02X} is the correct write command byte!"
+                    )
+                    results.append((cmd, "SUCCESS - VERIFIED"))
+                    self._print_sweep_summary(results)
+                    return cmd
+                else:
+                    print(
+                        f"  ⚠️  Got ACK but readback shows {verify_value}, expected {value} - inconclusive"
+                    )
+                    results.append((cmd, f"ACK but unverified (read {verify_value})"))
+            elif result_byte == self.pump.nak:
+                print(f"  ❌ 0x{cmd:02X}: NAK")
+                self.serial.parity = serial.PARITY_MARK
+                results.append((cmd, "NAK"))
+            elif result_byte is not None:
+                print(f"  ⚠️  0x{cmd:02X}: unexpected byte 0x{result_byte:02X}")
+                self.serial.parity = serial.PARITY_MARK
+                results.append((cmd, f"unexpected 0x{result_byte:02X}"))
+            else:
+                print(f"  ❌ 0x{cmd:02X}: timeout, no response")
+                self.serial.parity = serial.PARITY_MARK
+                results.append((cmd, "timeout"))
+
+            time.sleep(1.5)  # brief pause before re-addressing for next attempt
+
+        self._print_sweep_summary(results)
+        return None
+
+    def _print_sweep_summary(self, results: List[Tuple[int, str]]) -> None:
+        print(f"\n{'=' * FULL_LINE}")
+        print("  SWEEP SUMMARY")
+        print(f"{'=' * FULL_LINE}")
+        for cmd, outcome in results:
+            print(f"  0x{cmd:02X}: {outcome}")
+        print()
+
     def get_value(self, param_index: int) -> Optional[float]:
         """Get cached parameter value"""
         return self.parameter_values.get(param_index)
@@ -1281,10 +1400,11 @@ def main():
     print("  2) Read single parameter")
     print("  3) Write parameter value")
     print("  4) Test write-packet encodings for 0x0B -> 6 (Kurvlutning)")
+    print("  6) Sweep command-byte candidates for 0x0B -> 6 (Kurvlutning)")
     print("  9) Capture bus traffic (diagnostic mode)")
     print("")
 
-    choice = input("Choose option [1/2/3/4/9] (default: 1): ").strip() or "1"
+    choice = input("Choose option [1/2/3/4/6/9] (default: 1): ").strip() or "1"
     print("")
 
     logger.info("")
@@ -1707,6 +1827,29 @@ def main():
             else:
                 print(f"\n❌ {packet_name}: Timeout - no response from pump")
                 pump.serial.parity = serial.PARITY_MARK
+
+        # Sweep command-byte candidates found in a real bus capture (relay
+        # and display use 0x45/0x40 when writing to the master; the master
+        # itself uses 0x55 for short pushes) - RCU's own write command byte
+        # is presumably a similar per-role constant, not the 0xC0 used only
+        # for master-to-RCU broadcasts. Keeps the otherwise-confirmed-correct
+        # packet structure fixed and only varies this one byte.
+        if choice == "6":
+            candidates = [
+                0x3F, 0x40, 0x41,  # around display's write command (0x40)
+                0x44, 0x45, 0x46,  # around relay's write command (0x45)
+                0x54, 0x55, 0x56,  # around master's push command (0x55)
+            ]
+            found = pump.sweep_write_command_bytes(0x0B, 6, candidates)
+            if found is not None:
+                print(f"\n🎉🎉 Found it! Command byte 0x{found:02X} works for RCU writes.")
+            else:
+                print(
+                    "\nNone of the swept command bytes worked. The real RCU command "
+                    "byte may be outside this range - worth trying a full 0x00-0xFF "
+                    "sweep if you're willing to let it run longer, or capturing real "
+                    "RCU traffic directly if that ever becomes possible."
+                )
 
     except KeyboardInterrupt:
         print("\n\n⚠️ Interrupted by user")
