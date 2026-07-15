@@ -281,14 +281,21 @@ class NibeHeatPump:
             logger.info("Disconnected")
 
     def _send_with_space_parity(self, data: bytes):
-        """Send data with SPACE parity (9th bit = 0)"""
+        """Send data with SPACE parity (9th bit = 0).
+
+        Does not switch parity back afterward - callers decide when to
+        switch back to MARK, since the very next thing received is often
+        more SPACE-parity data (e.g. an ACK/NAK reply), not a MARK-parity
+        addressing/ETX byte. Switching back unconditionally here meant
+        every call did two USB control transfers (parity changes go over
+        USB on this FTDI adapter) instead of one, and in write_parameter()
+        specifically it left the port listening in the wrong parity mode
+        while waiting for the pump's ACK/NAK response.
+        """
         if self.serial:
-            # Switch to Space parity for sending data
             self.serial.parity = serial.PARITY_SPACE
             self.serial.write(data)
             self.serial.flush()
-            # Switch back to Mark parity for receiving
-            self.serial.parity = serial.PARITY_MARK
             logger.debug(f"Sent with SPACE: {data.hex(' ').upper()}")
 
     def _send_with_mark_parity(self, data: bytes):
@@ -602,6 +609,10 @@ class NibeHeatPump:
 
                 time.sleep(0.05)
 
+                # ETX and the next addressing sequence use MARK parity -
+                # switch back now that our SPACE-parity reply is done.
+                self.serial.parity = serial.PARITY_MARK
+
                 # Step 5: Wait for ETX
                 etx_start = time.time()
                 while time.time() - etx_start < 1.0:
@@ -690,6 +701,10 @@ class NibeHeatPump:
                             self._send_with_space_parity(bytes([self.pump.ack]))
                             time.sleep(0.05)
 
+                            # ETX uses MARK parity - switch back now that our
+                            # SPACE-parity reply is done.
+                            self.serial.parity = serial.PARITY_MARK
+
                             # Wait for ETX to complete protocol cycle
                             etx_start = time.time()
                             while time.time() - etx_start < 1.0:
@@ -713,6 +728,10 @@ class NibeHeatPump:
                             self._send_with_space_parity(bytes([self.pump.ack]))
                             time.sleep(0.05)
 
+                            # ETX uses MARK parity - switch back now that our
+                            # SPACE-parity reply is done.
+                            self.serial.parity = serial.PARITY_MARK
+
                             # Wait for ETX to complete protocol cycle
                             etx_start = time.time()
                             while time.time() - etx_start < 1.0:
@@ -733,6 +752,10 @@ class NibeHeatPump:
                         # Send ACK to confirm receipt
                         self._send_with_space_parity(bytes([self.pump.ack]))
                         time.sleep(0.05)
+
+                        # ETX uses MARK parity - switch back now that our
+                        # SPACE-parity reply is done.
+                        self.serial.parity = serial.PARITY_MARK
 
                         # Wait for ETX
                         etx_start = time.time()
@@ -755,7 +778,9 @@ class NibeHeatPump:
                     )
                     self._send_with_space_parity(bytes([self.pump.ack]))
                     time.sleep(0.05)
-                    # Don't wait for ETX - move quickly to catch next addressing
+                    # Don't wait for ETX - move quickly to catch next addressing,
+                    # which needs MARK parity.
+                    self.serial.parity = serial.PARITY_MARK
         logger.warning(
             f"⏱️ Timeout: Parameter 0x{param_index:02X} not received within {timeout}s"
         )
@@ -852,6 +877,7 @@ class NibeHeatPump:
 
         if not pump_acked:
             logger.error("❌ Pump did not acknowledge write request")
+            self.serial.parity = serial.PARITY_MARK
             return False
 
         # Build data packet
@@ -861,12 +887,14 @@ class NibeHeatPump:
             logger.error(
                 f"❌ Parameter 0x{param_index:02X} not defined in YAML! Cannot write."
             )
+            self.serial.parity = serial.PARITY_MARK
             return False
 
         if param.data_type is None:
             logger.error(
                 f"❌ Parameter 0x{param_index:02X} is missing data_type in YAML!"
             )
+            self.serial.parity = serial.PARITY_MARK
             return False
 
         data_type = param.data_type  ## TODO use this?
@@ -918,13 +946,14 @@ class NibeHeatPump:
         logger.info(
             f"   Checksum: 0x{checksum:02X}, Data length field: 0x{data_length:02X}"
         )
-        # Send packet using same method as ENQ (switches back to MARK after sending)
         self._send_with_space_parity(packet_bytes)
 
         # Give pump time to process and respond
         time.sleep(0.15)
 
-        # Wait for ACK or NAK (we're back in MARK parity now, consistent with ENQ handling)
+        # Wait for ACK or NAK - these are data-type response bytes (SPACE
+        # parity), same as everywhere else in the exchange, so we stay in
+        # SPACE parity here rather than switching to MARK.
         logger.info("⏳ Waiting for pump response (ACK/NAK)...")
         logger.info(f"   Current parity mode: {self.serial.parity}")
         logger.info(f"   Bytes in buffer: {self.serial.in_waiting}")
@@ -964,11 +993,13 @@ class NibeHeatPump:
                     return True
                 elif byte[0] == self.pump.nak:
                     logger.error("❌ Pump rejected write (NAK - checksum error)")
+                    self.serial.parity = serial.PARITY_MARK
                     return False
                 else:
                     logger.error(
                         f"❌ Unexpected byte during ACK/NAK wait: 0x{byte[0]:02X}"
                     )
+                    self.serial.parity = serial.PARITY_MARK
                     return False
             time.sleep(0.01)
             # Periodic check
@@ -984,6 +1015,9 @@ class NibeHeatPump:
             )
         else:
             logger.error("❌ Timeout waiting for pump response (no bytes received)")
+        # Leave the port in MARK parity regardless of outcome, so whatever
+        # runs next (e.g. a verification read) starts in a known-good state.
+        self.serial.parity = serial.PARITY_MARK
         return False
 
     def get_value(self, param_index: int) -> Optional[float]:
