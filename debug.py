@@ -11,6 +11,9 @@ This implementation passively reads parameters by responding to the pump's polli
 
 import serial
 import time
+import random
+import json
+import os
 from typing import Optional, Dict, List, Tuple
 from dataclasses import dataclass
 import logging
@@ -20,7 +23,28 @@ from datetime import datetime
 
 FULL_LINE = 53
 TIMEOUT = 60  # seconds
-SWEEP_RESULTS_FILE = "sweep_results.txt"
+SWEEP_RESULTS_FILE = "sweep_results.json"
+
+# Command bytes with independent evidence they might be meaningful:
+# 0x40/0x45 = relay/display write commands seen in a real bus capture,
+# 0x55 = the master's own short-push command (also from that capture),
+# 0xE4 = the only value out of a full 0x00-0xFF sweep that ever got ACK'd
+# (though unverified - readback showed the write didn't actually apply).
+ANCHOR_COMMAND_BYTES = [0x40, 0x45, 0x55, 0xE4]
+
+
+def sort_by_proximity_to_anchors(
+    candidates: List[int], anchors: List[int] = ANCHOR_COMMAND_BYTES
+) -> List[int]:
+    """Order candidates by distance to the nearest anchor value, closest
+    first, so a sweep checks near known-meaningful command bytes before
+    working outward toward 0x00 and 0xFF - if the real value is a similar
+    constant, this finds it much sooner than a strict sequential scan."""
+
+    def distance(cmd: int) -> int:
+        return min(abs(cmd - a) for a in anchors)
+
+    return sorted(candidates, key=lambda c: (distance(c), c))
 
 # Setup logging
 logging.basicConfig(
@@ -1065,15 +1089,6 @@ class NibeHeatPump:
         print(f"Results also being written to: {SWEEP_RESULTS_FILE}")
         print(f"{'=' * FULL_LINE}\n")
 
-        try:
-            with open(SWEEP_RESULTS_FILE, "a", encoding="utf-8") as f:
-                f.write(
-                    f"\n=== Sweep started {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} "
-                    f"- 0x{param_index:02X} = {value}, {len(command_bytes)} candidates ===\n"
-                )
-        except OSError as e:
-            logger.warning(f"Could not write to {SWEEP_RESULTS_FILE}: {e}")
-
         results: List[Tuple[int, str]] = []
         sweep_start = time.time()
 
@@ -1090,16 +1105,20 @@ class NibeHeatPump:
     def _record_sweep_result(
         self, results: List[Tuple[int, str]], cmd: int, outcome: str
     ) -> None:
-        """Record a sweep attempt in memory and append it to a results file
-        immediately, so progress survives even if the process is killed or
-        the connection drops mid-sweep - not just written at the end."""
+        """Record a sweep attempt in memory and persist it immediately (one
+        entry per command byte, overwritten in place on retest), so
+        progress survives even if the process is killed mid-sweep - not
+        just written at the end. A retry pass just needs to load this file
+        and pick out whichever entries still show an inconclusive outcome,
+        no "which one is the latest" logic needed."""
         results.append((cmd, outcome))
         try:
-            with open(SWEEP_RESULTS_FILE, "a", encoding="utf-8") as f:
-                f.write(
-                    f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - "
-                    f"0x{cmd:02X}: {outcome}\n"
-                )
+            state = load_sweep_state()
+            state[cmd] = {
+                "outcome": outcome,
+                "last_tested": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            save_sweep_state(state)
         except OSError as e:
             logger.warning(f"Could not write to {SWEEP_RESULTS_FILE}: {e}")
 
@@ -1149,7 +1168,7 @@ class NibeHeatPump:
                 print(f"  ❌ 0x{cmd:02X}: pump did not ACK the ENQ")
                 self.serial.parity = serial.PARITY_MARK
                 self._record_sweep_result(results, cmd, "no ENQ ack")
-                time.sleep(1.0)
+                time.sleep(1.0 + random.uniform(0, 2.0))
                 continue
 
             self.serial.reset_input_buffer()
@@ -1198,29 +1217,25 @@ class NibeHeatPump:
                 self.serial.parity = serial.PARITY_MARK
                 self._record_sweep_result(results, cmd, "timeout")
 
-            time.sleep(1.5)  # brief pause before re-addressing for next attempt
+            # Jittered pause (not a fixed interval) - a fixed pause here
+            # aliases against the pump master's own independent polling
+            # cycle, producing a misleading periodic pattern in results
+            # (e.g. every 7th attempt landing in the same phase of the
+            # master's cycle) rather than genuine per-value signal.
+            time.sleep(1.5 + random.uniform(0, 3.0))
 
         self._print_sweep_summary(results)
         return None
 
     def _print_sweep_summary(self, results: List[Tuple[int, str]]) -> None:
+        # SWEEP_RESULTS_FILE is already up to date at this point - each
+        # result was persisted immediately as it happened, not batched here.
         print(f"\n{'=' * FULL_LINE}")
         print("  SWEEP SUMMARY")
         print(f"{'=' * FULL_LINE}")
         for cmd, outcome in results:
             print(f"  0x{cmd:02X}: {outcome}")
-        print()
-
-        try:
-            with open(SWEEP_RESULTS_FILE, "a", encoding="utf-8") as f:
-                f.write(
-                    f"--- Summary ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')}) ---\n"
-                )
-                for cmd, outcome in results:
-                    f.write(f"  0x{cmd:02X}: {outcome}\n")
-                f.write("\n")
-        except OSError as e:
-            logger.warning(f"Could not write to {SWEEP_RESULTS_FILE}: {e}")
+        print(f"\n(Full state persisted in {SWEEP_RESULTS_FILE})\n")
 
     def get_value(self, param_index: int) -> Optional[float]:
         """Get cached parameter value"""
@@ -1238,6 +1253,39 @@ class NibeHeatPump:
     def get_all_bit_fields(self) -> Dict[str, int]:
         """Get all cached bit field values"""
         return self.bit_field_values.copy()
+
+
+def load_sweep_state(results_file: str = SWEEP_RESULTS_FILE) -> Dict[int, dict]:
+    """Load known sweep results as {command_byte_int: {"outcome": ..., "last_tested": ...}}.
+
+    The file is a flat JSON object keyed by hex string (e.g. "0x40"), so
+    each command byte has exactly one entry that gets overwritten in place
+    on retest - no parsing/precedence logic needed to figure out "the
+    latest result for this byte" across multiple runs, unlike a growing
+    append-only log.
+    """
+    try:
+        with open(results_file, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+    return {int(k, 16): v for k, v in raw.items()}
+
+
+def save_sweep_state(state: Dict[int, dict], results_file: str = SWEEP_RESULTS_FILE) -> None:
+    """Write sweep state to disk atomically (write to a temp file, then
+    rename over the real file). A plain in-place write would risk leaving
+    a half-written, corrupted JSON file - and unusable results for every
+    command byte, not just the newest one - if the process is killed or
+    the Pi loses power mid-write, which is a real risk for a long
+    unattended background run on hardware that's already dropped out
+    before. os.replace() is atomic on POSIX, so the real file is always
+    either the previous complete state or the new complete state."""
+    raw = {f"0x{cmd:02X}": entry for cmd, entry in state.items()}
+    tmp_path = f"{results_file}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(raw, f, indent=2, sort_keys=True)
+    os.replace(tmp_path, results_file)
 
 
 def load_from_yaml(file_path: str, pump_name: str) -> Tuple[List[Register], Pump]:
@@ -1465,7 +1513,42 @@ def main():
             logger.error("❌ Failed to connect!")
             return
         try:
-            found = pump.sweep_write_command_bytes(0x0B, 6, list(range(0x00, 0x100)))
+            ordered = sort_by_proximity_to_anchors(list(range(0x00, 0x100)))
+            found = pump.sweep_write_command_bytes(0x0B, 6, ordered)
+            if found is not None:
+                print(f"\n🎉🎉 Found it! Command byte 0x{found:02X} works for RCU writes.")
+        finally:
+            pump.disconnect()
+        return
+
+    # Retry mode - reads SWEEP_RESULTS_FILE and re-tries only the command
+    # bytes whose last recorded outcome was inconclusive ("no addressing",
+    # "timeout", "no ENQ ack") rather than a genuine NAK/ACK response. Uses
+    # the jittered pacing above, which the original full sweep didn't have.
+    if len(sys.argv) > 1 and sys.argv[1] == "sweep-retry":
+        previous = load_sweep_state()
+        inconclusive_outcomes = {"no addressing", "timeout", "no ENQ ack"}
+        candidates = sort_by_proximity_to_anchors(
+            [
+                cmd
+                for cmd, entry in previous.items()
+                if entry.get("outcome") in inconclusive_outcomes
+            ]
+        )
+        if not candidates:
+            print(f"No inconclusive results found in {SWEEP_RESULTS_FILE}")
+            return
+        print(
+            f"Found {len(candidates)} inconclusive command bytes from previous "
+            f"run(s) - retrying with jittered timing to avoid the alignment "
+            f"artifact from the fixed-pacing sweep."
+        )
+        pump = NibeHeatPump(SERIAL_PORT, parameters=NIBE_PARAMETERS, pump_info=PUMP)
+        if not pump.connect():
+            logger.error("❌ Failed to connect!")
+            return
+        try:
+            found = pump.sweep_write_command_bytes(0x0B, 6, candidates)
             if found is not None:
                 print(f"\n🎉🎉 Found it! Command byte 0x{found:02X} works for RCU writes.")
         finally:
@@ -1923,7 +2006,7 @@ def main():
             sweep_mode = input("\nChoice [1/2] (default: 1): ").strip() or "1"
 
             if sweep_mode == "2":
-                candidates = list(range(0x00, 0x100))
+                candidates = sort_by_proximity_to_anchors(list(range(0x00, 0x100)))
                 print(
                     f"\n⚠️  Full sweep: {len(candidates)} candidates, each involving "
                     "real bus traffic. This will run for a while - Ctrl+C to stop "
