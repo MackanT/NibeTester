@@ -436,6 +436,124 @@ class NibeHeatPump:
 
         return buffer
 
+    def listen_as_rcu(self, duration: float = 90.0) -> Dict:
+        """
+        Passively present as a live RCU - ACK every read broadcast with the
+        exact same timing as read_parameters_once() - while logging the raw
+        bytes master sends right after each ACK, instead of assuming it's
+        always the known 0xC0 broadcast.
+
+        No physical RCU has ever answered master's addressing of 0x14 in any
+        capture taken so far, so we don't know whether master's behavior
+        toward RCU changes once something is actually there to respond -
+        e.g. it might start sending an ENQ toward RCU the way it does to
+        relay/display for their button-state polling, which would be a
+        genuinely new interaction type. This only ever ACKs (identical to
+        the already-safe read path) - it never sends ENQ or a write packet -
+        so the worst case is the same as an ordinary read: master times out
+        and moves on.
+        """
+        if not self.pump:
+            raise ValueError("Pump configuration is required")
+
+        print(f"\n{'=' * FULL_LINE}")
+        print("  RCU PRESENCE MONITOR")
+        print(f"{'=' * FULL_LINE}")
+        print(
+            f"\nActing as a live RCU for {duration:.0f}s - ACK'ing every read "
+            "broadcast exactly like a normal read, but logging the raw bytes "
+            "master sends right after each ACK so we can spot anything other "
+            "than the known 0xC0 broadcast.\n"
+        )
+
+        start_time = time.time()
+        stats = {
+            "addressed": 0,
+            "normal_broadcast": 0,
+            "no_followup": 0,
+            "novel": [],  # list of (addressed_count, raw_bytes_hex)
+        }
+
+        while time.time() - start_time < duration:
+            if not self._wait_for_addressing(timeout=2.0, verbose=False):
+                continue
+
+            stats["addressed"] += 1
+
+            # ACK immediately - identical timing to the proven read flow, so
+            # we don't change master's behavior just by being slower to
+            # respond than a normal read would be.
+            self._send_with_space_parity(bytes([self.pump.ack]))
+            time.sleep(0.05)
+
+            # Grab whatever comes back raw, instead of assuming it's 0xC0.
+            raw = bytearray()
+            raw_deadline = time.time() + 1.0
+            while time.time() < raw_deadline:
+                if self.serial.in_waiting > 0:
+                    raw.extend(self.serial.read(self.serial.in_waiting))
+                elif raw:
+                    break  # got something, bus has gone quiet - done
+                time.sleep(0.005)
+
+            if not raw:
+                stats["no_followup"] += 1
+            elif raw[0] == self.pump.cmd_data:
+                stats["normal_broadcast"] += 1
+                # Complete the cycle the same way a normal read does, so
+                # master doesn't stall waiting on a second ACK it expects.
+                self._send_with_space_parity(bytes([self.pump.ack]))
+                time.sleep(0.05)
+            else:
+                stats["novel"].append((stats["addressed"], raw.hex(" ").upper()))
+                print(
+                    f"  🆕 [{stats['addressed']}] Unexpected data after ACK "
+                    f"(not a 0xC0 broadcast): {raw.hex(' ').upper()}"
+                )
+
+            self.serial.parity = serial.PARITY_MARK
+
+            # Wait briefly for ETX before moving on, same as a normal read.
+            etx_deadline = time.time() + 1.0
+            while time.time() < etx_deadline:
+                if self.serial.in_waiting > 0:
+                    byte = self.serial.read(1)
+                    if byte[0] == self.pump.etx:
+                        break
+                time.sleep(0.01)
+
+            if stats["addressed"] % 25 == 0:
+                elapsed = time.time() - start_time
+                print(
+                    f"  ...{elapsed:.0f}s: addressed {stats['addressed']}x, "
+                    f"{stats['normal_broadcast']} normal, "
+                    f"{stats['no_followup']} no-followup, "
+                    f"{len(stats['novel'])} novel"
+                )
+
+        print(f"\n{'=' * FULL_LINE}")
+        print("  SUMMARY")
+        print(f"{'=' * FULL_LINE}")
+        print(f"  Addressed as RCU: {stats['addressed']} times")
+        print(f"  Normal 0xC0 broadcasts: {stats['normal_broadcast']}")
+        print(f"  No followup (timeout after ACK): {stats['no_followup']}")
+        print(f"  Novel/unexpected exchanges: {len(stats['novel'])}")
+        if stats["novel"]:
+            print(
+                "\n  🎉 Master did something other than a standard broadcast "
+                "while we were present as RCU - worth digging into:"
+            )
+            for count, raw_hex in stats["novel"][:10]:
+                print(f"    #{count}: {raw_hex}")
+        else:
+            print(
+                "\n  No new interaction type observed - master only ever sent "
+                "the standard 0xC0 broadcast, same shape as ordinary reads."
+            )
+        print()
+
+        return stats
+
     def _wait_for_addressing(
         self, timeout: float = 5.0, verbose: bool = True, wait_for_enq: bool = False
     ) -> bool:
@@ -1648,6 +1766,22 @@ def main():
             pump.disconnect()
         return
 
+    # Non-interactive RCU presence monitor - watches how master treats a
+    # live-responding RCU, since no capture so far has had anything answer
+    # the RCU address at all. Meant to be left running unattended
+    # (`nohup python debug.py rcu-listen 600 &`) the same way `sweep` is.
+    if len(sys.argv) > 1 and sys.argv[1] == "rcu-listen":
+        listen_duration = float(sys.argv[2]) if len(sys.argv) > 2 else 90.0
+        pump = NibeHeatPump(SERIAL_PORT, parameters=NIBE_PARAMETERS, pump_info=PUMP)
+        if not pump.connect():
+            logger.error("❌ Failed to connect!")
+            return
+        try:
+            pump.listen_as_rcu(duration=listen_duration)
+        finally:
+            pump.disconnect()
+        return
+
     print("")
     print("" + "=" * FULL_LINE)
     print(f"  Configured for {PUMP.name} Heat Pump Reader")
@@ -1660,9 +1794,10 @@ def main():
     print("  4) Test write-packet encodings for 0x0B -> 6 (Kurvlutning)")
     print("  6) Sweep command-byte candidates for 0x0B -> 6 (Kurvlutning)")
     print("  9) Capture bus traffic (diagnostic mode)")
+    print("  10) Monitor how master treats a live-responding RCU (new)")
     print("")
 
-    choice = input("Choose option [1/2/3/4/6/9] (default: 1): ").strip() or "1"
+    choice = input("Choose option [1/2/3/4/6/9/10] (default: 1): ").strip() or "1"
     print("")
 
     logger.info("")
@@ -1714,6 +1849,24 @@ def main():
             time.sleep(2)
 
             pump.capture_bus_traffic(duration=capture_duration)
+
+        # RCU presence monitor
+        if choice == "10":
+            print("\n" + "=" * FULL_LINE)
+            print("  RCU PRESENCE MONITOR")
+            print("=" * FULL_LINE)
+            duration_input = input(
+                "\nMonitor duration in seconds (default: 90): "
+            ).strip()
+            try:
+                monitor_duration = float(duration_input) if duration_input else 90.0
+            except ValueError:
+                monitor_duration = 90.0
+            print("\nPresenting as a live RCU and watching master's behavior...")
+            print("Press Ctrl+C to stop early...\n")
+            time.sleep(2)
+
+            pump.listen_as_rcu(duration=monitor_duration)
 
         # Normal operation
         if choice == "1":
