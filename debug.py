@@ -382,6 +382,24 @@ class NibeHeatPump:
                 f"\n  - Found '{self.pump.cmd_data:02X}' (CMD_DATA): {count_cmd} times"
             )
 
+            # Look specifically for ENQ (0x05) - this is what an RCU sends
+            # instead of ACK to signal "I have data to write", so it should
+            # be rare/absent during normal reads and only appear around a
+            # real write. This is the key thing to look for in a capture
+            # taken while a real RCU performs an actual write.
+            enq_positions = [i for i, b in enumerate(buffer) if b == self.pump.enq]
+            print(
+                f"\n✍️  ENQ (0x{self.pump.enq:02X}) occurrences: {len(enq_positions)} "
+                "(look here for a real write sequence)"
+            )
+            for idx, pos in enumerate(enq_positions[:15]):
+                context = buffer[max(0, pos - 3) : min(len(buffer), pos + 20)]
+                marker_offset = min(3, pos)
+                print(
+                    f"    #{idx + 1} at byte {pos}: {context.hex(' ').upper()} "
+                    f"(ENQ is byte {marker_offset + 1} of this snippet)"
+                )
+
             # Show first 100 bytes in hex
             print("\n📝 First 100 bytes:")
             for i in range(min(100, len(buffer))):
@@ -1305,11 +1323,19 @@ def main():
             print("\n" + "=" * FULL_LINE)
             print("  BUS TRAFFIC CAPTURE")
             print("=" * FULL_LINE)
+            duration_input = input(
+                "\nCapture duration in seconds (default: 90 - enough time to walk "
+                "to the RCU and perform a write): "
+            ).strip()
+            try:
+                capture_duration = float(duration_input) if duration_input else 90.0
+            except ValueError:
+                capture_duration = 90.0
             print("\nCapturing raw RS-485 bus data...")
-            print("Press Ctrl+C to stop...\n")
+            print("Press Ctrl+C to stop early...\n")
             time.sleep(2)
 
-            pump.capture_bus_traffic(duration=15.0)
+            pump.capture_bus_traffic(duration=capture_duration)
 
         # Normal operation
         if choice == "1":
